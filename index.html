@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f7" />
     <title>Lexicon — 영단어 암기</title>
     <link rel="stylesheet" href="style.css" />
     <link rel="manifest" href="./manifest.json" />
@@ -46,7 +47,7 @@
           </div>
         </div>
 
-        <div class="header-actions">
+        <div class="header-actions" id="headerActions">
           <button
             type="button"
             id="exportBtn"
@@ -69,6 +70,7 @@
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
+            <span class="header-action-label">백업</span>
           </button>
 
           <button
@@ -93,14 +95,8 @@
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
+            <span class="header-action-label">복원</span>
           </button>
-          <input
-            type="file"
-            id="importFileInput"
-            accept="application/json,.json"
-            hidden
-            aria-hidden="true"
-          />
 
           <button
             type="button"
@@ -146,14 +142,163 @@
             >
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
+            <span id="themeToggleLabel" class="header-action-label"
+              >다크 모드</span
+            >
+          </button>
+        </div>
+
+        <input
+          type="file"
+          id="importFileInput"
+          accept="application/json,.json"
+          hidden
+          aria-hidden="true"
+        />
+
+        <!-- 모바일 전용 컴팩트 상태 + 메뉴 트리거 -->
+        <div class="mobile-header-controls">
+          <button
+            type="button"
+            id="mobileStatusPill"
+            class="mobile-status-pill"
+            aria-label="현재 학습 진행률 및 필터 메뉴 열기"
+          >
+            <span
+              id="mobileFilterTag"
+              class="mobile-filter-tag"
+              hidden
+            ></span>
+            <span id="mobileProgressText" class="mobile-progress-text"
+              >1 / 30</span
+            >
+          </button>
+
+          <button
+            type="button"
+            id="mobileMenuBtn"
+            class="mobile-menu-btn"
+            aria-expanded="false"
+            aria-controls="mobileMenu"
+            aria-label="통계 및 설정 메뉴 열기"
+          >
+            <svg
+              class="icon-menu"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+            </svg>
+            <svg
+              class="icon-close"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+            <span id="mobileMenuBtnText" class="mobile-menu-btn-text"
+              >메뉴</span
+            >
+            <span
+              id="mobileMenuDot"
+              class="mobile-menu-dot"
+              hidden
+              aria-hidden="true"
+            ></span>
           </button>
         </div>
       </div>
+      <!-- 모바일 전용 상단 초슬림 마스터 진행률 헤어라인 -->
+      <div class="header-mastery-track" aria-hidden="true">
+        <div id="headerMasteryBar" class="header-mastery-fill"></div>
+      </div>
     </header>
+
+    <!-- 모바일 전용 펼침 메뉴 (통계 · 필터 · 설정) -->
+    <div
+      id="mobileMenuBackdrop"
+      class="mobile-menu-backdrop"
+      aria-hidden="true"
+    ></div>
+    <aside
+      id="mobileMenu"
+      class="mobile-menu"
+      role="dialog"
+      aria-modal="true"
+      aria-label="학습 현황 및 설정 메뉴"
+      aria-hidden="true"
+    >
+      <div class="mobile-menu-header">
+        <span class="mobile-menu-title">학습 현황 · 설정</span>
+        <button
+          type="button"
+          id="mobileMenuCloseBtn"
+          class="mobile-menu-close"
+          aria-label="메뉴 닫기"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="mobile-menu-body">
+        <div class="menu-section">
+          <span class="menu-section-label">실시간 통계</span>
+          <div id="menuSlotStats" class="menu-slot"></div>
+        </div>
+
+        <div class="menu-section">
+          <span class="menu-section-label">학습 필터 · 덱</span>
+          <div id="menuSlotStudyControls" class="menu-slot menu-slot-controls"></div>
+        </div>
+
+        <div class="menu-section">
+          <span class="menu-section-label">화면 · 데이터</span>
+          <div id="menuSlotAppActions" class="menu-slot menu-slot-actions"></div>
+        </div>
+
+        <p class="menu-gesture-tip">
+          스와이프: 왼쪽 <strong>모름</strong> · 오른쪽 <strong>알겠음</strong>
+        </p>
+      </div>
+    </aside>
 
     <main class="app-container">
       <!-- 2. 실시간 미니 통계 위젯 -->
-      <section class="stats-widget" aria-label="실시간 학습 통계">
+      <section
+        id="statsWidget"
+        class="stats-widget"
+        aria-label="실시간 학습 통계"
+      >
         <div class="stat-card">
           <span class="stat-label">오늘 학습</span>
           <div class="stat-value-row">
@@ -238,7 +383,7 @@
           </button>
         </div>
 
-        <div class="filter-wrapper">
+        <div class="filter-wrapper" id="filterWrapper">
           <label for="dayFilter" class="sr-only">Day 필터 선택</label>
           <select id="dayFilter" class="ios-select" aria-label="Day 필터">
             <option value="all">전체 Day (30)</option>
@@ -383,7 +528,12 @@
                 </div>
 
                 <div class="card-bottom-hint">
-                  <span>카드를 탭하거나 <kbd>Space</kbd> 로 뜻 확인</span>
+                  <span class="hint-desktop"
+                    >카드를 탭하거나 <kbd>Space</kbd> 로 뜻 확인</span
+                  >
+                  <span class="hint-mobile"
+                    >탭해서 뜻 확인 · 좌우 스와이프</span
+                  >
                 </div>
               </div>
 
@@ -449,9 +599,12 @@
                 </div>
 
                 <div class="card-bottom-hint">
-                  <span
+                  <span class="hint-desktop"
                     >아래 버튼 또는 <kbd>1</kbd>–<kbd>4</kbd> 로 기억 정도
                     평가</span
+                  >
+                  <span class="hint-mobile"
+                    >아래 버튼 또는 좌우 스와이프 평가</span
                   >
                 </div>
               </div>

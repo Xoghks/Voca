@@ -9,6 +9,9 @@
   const TAB_ORDER = ["all", "wrong-study", "wrong-archive"];
   const FLY_OUT_DURATION_MS = 280;
   const ENTER_ANIMATION_MS = 380;
+  const MOBILE_LAYOUT_QUERY =
+    "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
+  const mobileMediaQuery = window.matchMedia(MOBILE_LAYOUT_QUERY);
 
   const WORDS = Array.isArray(window.VOCAB_DATA)
     ? window.VOCAB_DATA
@@ -23,14 +26,35 @@
      ======================================================================== */
   const dom = {
     html: document.documentElement,
+    themeColorMeta: document.querySelector('meta[name="theme-color"]'),
 
-    // Header
+    // Header & Layout Containers
+    headerInner: document.querySelector(".header-inner"),
+    headerActions: document.getElementById("headerActions"),
     exportBtn: document.getElementById("exportBtn"),
     importBtn: document.getElementById("importBtn"),
     importFileInput: document.getElementById("importFileInput"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
+    themeToggleLabel: document.getElementById("themeToggleLabel"),
+    headerMasteryBar: document.getElementById("headerMasteryBar"),
 
-    // Stats
+    // Mobile Compact Header & Expandable Menu
+    mobileStatusPill: document.getElementById("mobileStatusPill"),
+    mobileFilterTag: document.getElementById("mobileFilterTag"),
+    mobileProgressText: document.getElementById("mobileProgressText"),
+    mobileMenuBtn: document.getElementById("mobileMenuBtn"),
+    mobileMenuBtnText: document.getElementById("mobileMenuBtnText"),
+    mobileMenuDot: document.getElementById("mobileMenuDot"),
+    mobileMenuBackdrop: document.getElementById("mobileMenuBackdrop"),
+    mobileMenu: document.getElementById("mobileMenu"),
+    mobileMenuCloseBtn: document.getElementById("mobileMenuCloseBtn"),
+    menuSlotStats: document.getElementById("menuSlotStats"),
+    menuSlotStudyControls: document.getElementById("menuSlotStudyControls"),
+    menuSlotAppActions: document.getElementById("menuSlotAppActions"),
+
+    // Main Containers & Stats
+    appContainer: document.querySelector(".app-container"),
+    statsWidget: document.getElementById("statsWidget"),
     statTodayCount: document.getElementById("statTodayCount"),
     statMasteryText: document.getElementById("statMasteryText"),
     statMasteryTrack: document.getElementById("statMasteryTrack"),
@@ -38,14 +62,17 @@
     statWrongCount: document.getElementById("statWrongCount"),
 
     // Navigation & Filter
+    navigationBar: document.querySelector(".navigation-bar"),
     segmentedIndicator: document.getElementById("segmentedIndicator"),
     tabButtons: Array.from(document.querySelectorAll(".segmented-btn")),
     tabWrongStudyCount: document.getElementById("tabWrongStudyCount"),
     tabArchiveCount: document.getElementById("tabArchiveCount"),
+    filterWrapper: document.getElementById("filterWrapper"),
     dayFilter: document.getElementById("dayFilter"),
 
     // Study View
     studyView: document.getElementById("studyView"),
+    deckMeta: document.querySelector(".deck-meta"),
     deckModeBadge: document.getElementById("deckModeBadge"),
     cardProgressText: document.getElementById("cardProgressText"),
     shuffleBtn: document.getElementById("shuffleBtn"),
@@ -196,6 +223,8 @@
     currentIndex: 0,
     isFlipped: false,
     isAnimating: false,
+    isMobileLayout: false,
+    isMenuOpen: false,
     toastTimer: null,
     enterTimer: null,
   };
@@ -231,6 +260,12 @@
     const resolved = theme === "dark" ? "dark" : "light";
     persistedState.theme = resolved;
     dom.html.setAttribute("data-theme", resolved);
+    if (dom.themeColorMeta) {
+      dom.themeColorMeta.setAttribute(
+        "content",
+        resolved === "dark" ? "#000000" : "#f5f5f7",
+      );
+    }
     if (dom.themeToggleBtn) {
       dom.themeToggleBtn.setAttribute(
         "aria-pressed",
@@ -238,6 +273,10 @@
       );
       dom.themeToggleBtn.title =
         resolved === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환";
+    }
+    if (dom.themeToggleLabel) {
+      dom.themeToggleLabel.textContent =
+        resolved === "dark" ? "라이트 모드" : "다크 모드";
     }
   }
 
@@ -446,7 +485,132 @@
     session.currentIndex = 0;
     resetCardFlipInstant();
     renderCurrentCard({ animateEnter: true });
+    closeMobileMenu();
     showToast("카드 순서를 무작위로 섞었습니다.");
+  }
+
+  /* ========================================================================
+     7.5. Mobile Expandable Menu & Responsive Placement
+     ======================================================================== */
+  function openMobileMenu() {
+    if (!session.isMobileLayout || !dom.mobileMenu) return;
+    session.isMenuOpen = true;
+    dom.mobileMenu.classList.add("is-open");
+    dom.mobileMenu.setAttribute("aria-hidden", "false");
+    if ("inert" in dom.mobileMenu) {
+      dom.mobileMenu.inert = false;
+    }
+    if (dom.mobileMenuBackdrop) {
+      dom.mobileMenuBackdrop.classList.add("is-open");
+    }
+    if (dom.mobileMenuBtn) {
+      dom.mobileMenuBtn.classList.add("is-open");
+      dom.mobileMenuBtn.setAttribute("aria-expanded", "true");
+      dom.mobileMenuBtn.setAttribute("aria-label", "통계 및 설정 메뉴 닫기");
+    }
+    if (dom.mobileMenuBtnText) {
+      dom.mobileMenuBtnText.textContent = "닫기";
+    }
+  }
+
+  function closeMobileMenu() {
+    if (!dom.mobileMenu) return;
+    session.isMenuOpen = false;
+    dom.mobileMenu.classList.remove("is-open");
+    dom.mobileMenu.setAttribute("aria-hidden", "true");
+    if ("inert" in dom.mobileMenu) {
+      dom.mobileMenu.inert = true;
+    }
+    if (dom.mobileMenuBackdrop) {
+      dom.mobileMenuBackdrop.classList.remove("is-open");
+    }
+    if (dom.mobileMenuBtn) {
+      dom.mobileMenuBtn.classList.remove("is-open");
+      dom.mobileMenuBtn.setAttribute("aria-expanded", "false");
+      dom.mobileMenuBtn.setAttribute("aria-label", "통계 및 설정 메뉴 열기");
+    }
+    if (dom.mobileMenuBtnText) {
+      dom.mobileMenuBtnText.textContent = "메뉴";
+    }
+  }
+
+  function toggleMobileMenu() {
+    if (session.isMenuOpen) {
+      closeMobileMenu();
+    } else {
+      openMobileMenu();
+    }
+  }
+
+  function syncResponsiveMenuPlacement(isMobile) {
+    session.isMobileLayout = Boolean(isMobile);
+
+    if (session.isMobileLayout) {
+      if (dom.statsWidget && dom.menuSlotStats) {
+        dom.menuSlotStats.appendChild(dom.statsWidget);
+      }
+      if (dom.filterWrapper && dom.menuSlotStudyControls) {
+        dom.menuSlotStudyControls.appendChild(dom.filterWrapper);
+      }
+      if (dom.shuffleBtn && dom.menuSlotStudyControls) {
+        dom.menuSlotStudyControls.appendChild(dom.shuffleBtn);
+      }
+      if (dom.headerActions && dom.menuSlotAppActions) {
+        dom.menuSlotAppActions.appendChild(dom.headerActions);
+      }
+      if (dom.mobileMenu && "inert" in dom.mobileMenu) {
+        dom.mobileMenu.inert = !session.isMenuOpen;
+      }
+    } else {
+      closeMobileMenu();
+      if (dom.headerActions && dom.headerInner && dom.importFileInput) {
+        dom.headerInner.insertBefore(dom.headerActions, dom.importFileInput);
+      }
+      if (dom.statsWidget && dom.appContainer && dom.navigationBar) {
+        dom.appContainer.insertBefore(dom.statsWidget, dom.navigationBar);
+      }
+      if (dom.filterWrapper && dom.navigationBar) {
+        dom.navigationBar.appendChild(dom.filterWrapper);
+      }
+      if (dom.shuffleBtn && dom.deckMeta) {
+        dom.deckMeta.appendChild(dom.shuffleBtn);
+      }
+    }
+
+    renderViewVisibility();
+  }
+
+  function renderMobileHeaderStatus() {
+    if (!dom.mobileStatusPill || !dom.mobileProgressText) return;
+
+    const isFiltered = session.dayFilter !== "all";
+    dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
+
+    if (dom.mobileFilterTag) {
+      if (session.dayFilter === "bookmarked") {
+        dom.mobileFilterTag.textContent = "★ 북마크";
+        dom.mobileFilterTag.hidden = false;
+      } else if (isFiltered) {
+        dom.mobileFilterTag.textContent = `Day ${session.dayFilter}`;
+        dom.mobileFilterTag.hidden = false;
+      } else {
+        dom.mobileFilterTag.textContent = "";
+        dom.mobileFilterTag.hidden = true;
+      }
+    }
+
+    if (dom.mobileMenuDot) {
+      dom.mobileMenuDot.hidden = !isFiltered;
+    }
+
+    if (session.activeTab === "wrong-archive") {
+      const count = getFilteredPool("wrong-archive").length;
+      dom.mobileProgressText.textContent = `오답 ${count}단어`;
+    } else if (session.queue.length === 0) {
+      dom.mobileProgressText.textContent = "0 / 0";
+    } else {
+      dom.mobileProgressText.textContent = `${session.currentIndex + 1} / ${session.queue.length}`;
+    }
   }
 
   /* ========================================================================
@@ -470,6 +634,9 @@
     dom.statTodayCount.textContent = String(persistedState.todayStats.count);
     dom.statMasteryText.textContent = `${masteryPercent}% (${masteredCount}/${totalWords})`;
     dom.statMasteryBar.style.width = `${masteryPercent}%`;
+    if (dom.headerMasteryBar) {
+      dom.headerMasteryBar.style.width = `${masteryPercent}%`;
+    }
     dom.statMasteryTrack.setAttribute("aria-valuenow", String(masteryPercent));
     dom.statWrongCount.textContent = String(wrongNoteCount);
 
@@ -504,6 +671,10 @@
     const isArchive = session.activeTab === "wrong-archive";
     dom.studyView.hidden = isArchive;
     dom.archiveView.hidden = !isArchive;
+
+    if (dom.shuffleBtn) {
+      dom.shuffleBtn.hidden = session.isMobileLayout && isArchive;
+    }
 
     if (!isArchive) {
       const tabId =
@@ -585,6 +756,7 @@
         dom.studyEmptyDesc.textContent =
           "다른 Day 필터를 선택해 학습을 이어가 보세요.";
       }
+      renderMobileHeaderStatus();
       return;
     }
 
@@ -609,6 +781,8 @@
     dom.cardMeaning.textContent = word.meaning;
     dom.cardExample.textContent = word.example;
     dom.cardExampleKo.textContent = word.exampleKo;
+
+    renderMobileHeaderStatus();
 
     if (animateEnter) {
       triggerCardEnterAnimation();
@@ -648,6 +822,8 @@
     const isEmpty = wrongWords.length === 0;
     dom.archiveList.hidden = isEmpty;
     dom.archiveEmptyState.hidden = !isEmpty;
+
+    renderMobileHeaderStatus();
 
     if (isEmpty) return;
 
@@ -926,6 +1102,7 @@
 
   function switchTab(nextTab) {
     if (!TAB_ORDER.includes(nextTab)) return;
+    closeMobileMenu();
     if (session.activeTab === nextTab) {
       updateSegmentedIndicator();
       return;
@@ -952,6 +1129,7 @@
     }
 
     renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
+    closeMobileMenu();
   }
 
   /* ========================================================================
@@ -978,6 +1156,7 @@
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+      closeMobileMenu();
       showToast("학습 데이터를 JSON 파일로 백업했습니다.", "success");
     } catch (error) {
       console.error("Export failed:", error);
@@ -1043,6 +1222,7 @@
         savePersistedState();
         buildSessionQueue();
         renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
+        closeMobileMenu();
         showToast(
           `학습 데이터를 복원했습니다. (${restoredCount}개 기록 반영)`,
           "success",
@@ -1258,6 +1438,14 @@
   }
 
   function handleKeyDown(e) {
+    if (session.isMenuOpen) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMobileMenu();
+      }
+      return;
+    }
+
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target && e.target.closest("input, textarea, select")) return;
 
@@ -1328,6 +1516,29 @@
       const file = e.target.files && e.target.files[0];
       importBackupJson(file);
     });
+
+    // Mobile expandable menu controls & responsive breakpoint listener
+    if (dom.mobileMenuBtn) {
+      dom.mobileMenuBtn.addEventListener("click", toggleMobileMenu);
+    }
+    if (dom.mobileStatusPill) {
+      dom.mobileStatusPill.addEventListener("click", toggleMobileMenu);
+    }
+    if (dom.mobileMenuBackdrop) {
+      dom.mobileMenuBackdrop.addEventListener("click", closeMobileMenu);
+    }
+    if (dom.mobileMenuCloseBtn) {
+      dom.mobileMenuCloseBtn.addEventListener("click", closeMobileMenu);
+    }
+
+    const handleMediaChange = (event) => {
+      syncResponsiveMenuPlacement(event.matches);
+    };
+    if (typeof mobileMediaQuery.addEventListener === "function") {
+      mobileMediaQuery.addEventListener("change", handleMediaChange);
+    } else if (typeof mobileMediaQuery.addListener === "function") {
+      mobileMediaQuery.addListener(handleMediaChange);
+    }
 
     // Segmented tabs & Day filter
     dom.tabButtons.forEach((btn) => {
@@ -1435,6 +1646,7 @@
   function init() {
     applyTheme(persistedState.theme);
     syncShortcutHintBar();
+    syncResponsiveMenuPlacement(mobileMediaQuery.matches);
     dom.dayFilter.value = session.dayFilter;
     dom.hideMeaningToggle.checked = persistedState.hideMeanings;
 
