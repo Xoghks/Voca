@@ -9,13 +9,13 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f5f5f7" />
     <title>Lexicon — 영단어 암기</title>
-    <link rel="stylesheet" href="style.css?v=2" />
+    <link rel="stylesheet" href="style.css?v=3" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=2");
+        navigator.serviceWorker.register("./sw.js?v=3");
       }
     </script>
     <!-- 1. 상단 글래스모피즘 헤더 -->
@@ -170,7 +170,7 @@
               hidden
             ></span>
             <span id="mobileProgressText" class="mobile-progress-text"
-              >1 / 30</span
+              >남은 30장</span
             >
           </button>
 
@@ -388,6 +388,9 @@
         <div class="filter-wrapper" id="filterWrapper">
           <label for="dayFilter" class="sr-only">Day 필터 선택</label>
           <select id="dayFilter" class="ios-select" aria-label="Day 필터">
+            <option value="smart-mix" selected>
+              오늘의 누적 복습 (스마트 믹스)
+            </option>
             <option value="all">전체 Day (30)</option>
             <option value="1">Day 1</option>
             <option value="2">Day 2</option>
@@ -420,8 +423,8 @@
       >
         <div class="deck-meta">
           <div class="deck-meta-left">
-            <span id="deckModeBadge" class="meta-pill">전체 학습</span>
-            <span id="cardProgressText" class="meta-counter">1 / 30</span>
+            <span id="deckModeBadge" class="meta-pill">스마트 믹스</span>
+            <span id="cardProgressText" class="meta-counter">남은 30장</span>
           </div>
           <button
             type="button"
@@ -465,9 +468,29 @@
               <!-- 카드 앞면 -->
               <div class="flashcard-face flashcard-front">
                 <div class="card-top-bar">
-                  <div class="card-tags">
-                    <span id="cardDayBadge" class="day-pill">Day 1</span>
-                    <span id="cardPos" class="pos-pill">adj.</span>
+                  <div class="card-top-left">
+                    <div class="card-tags">
+                      <span id="cardDayBadge" class="day-pill">Day 1</span>
+                      <span id="cardPos" class="pos-pill">adj.</span>
+                    </div>
+                    <div
+                      id="cardMasteryMeta"
+                      class="card-mastery-meta"
+                      aria-label="숙련도 0단계 / 3단계"
+                    >
+                      <span
+                        id="cardLevelDots"
+                        class="level-dots"
+                        aria-hidden="true"
+                      >
+                        <span class="level-dot"></span>
+                        <span class="level-dot"></span>
+                        <span class="level-dot"></span>
+                      </span>
+                      <span id="cardLastStudied" class="last-studied-text"
+                        >신규</span
+                      >
+                    </div>
                   </div>
 
                   <div class="card-actions">
@@ -475,7 +498,7 @@
                       type="button"
                       id="pronounceBtn"
                       class="card-action-btn"
-                      title="발음 듣기 (S)"
+                      title="발음 듣기 (R)"
                       aria-label="영어 발음 재생"
                     >
                       <svg
@@ -602,7 +625,7 @@
 
                 <div class="card-bottom-hint">
                   <span class="hint-desktop"
-                    >아래 버튼 또는 <kbd>1</kbd>–<kbd>4</kbd> 로 기억 정도
+                    >아래 버튼 또는 <kbd>1</kbd>–<kbd>3</kbd> 로 기억 정도
                     평가</span
                   >
                   <span class="hint-mobile"
@@ -614,7 +637,7 @@
           </div>
         </div>
 
-        <!-- 빈 상태 UI (오답 집중 공략 / 북마크 등 해당 단어가 없을 때) -->
+        <!-- 빈 상태 / 세션 완료 UI -->
         <div id="studyEmptyState" class="empty-state" hidden>
           <div class="empty-icon" aria-hidden="true">
             <svg
@@ -635,15 +658,25 @@
             학습할 단어가 없습니다
           </h3>
           <p id="studyEmptyDesc" class="empty-desc">
-            현재 선택한 필터에 해당하는 단어가 없습니다. 전체 학습으로 돌아가
+            현재 선택한 필터에 해당하는 단어가 없습니다. 스마트 믹스로 돌아가
             단어를 암기해 보세요.
           </p>
-          <button type="button" id="returnToAllBtn" class="primary-pill-btn">
-            전체 학습으로 이동
-          </button>
+          <div class="empty-actions">
+            <button
+              type="button"
+              id="restartSessionBtn"
+              class="primary-pill-btn"
+              hidden
+            >
+              다시 학습하기
+            </button>
+            <button type="button" id="returnToAllBtn" class="primary-pill-btn">
+              스마트 믹스로 이동
+            </button>
+          </div>
         </div>
 
-        <!-- 5. 하단 컨트롤 바 (4단계 기억 평가 + 키보드 단축키 힌트) -->
+        <!-- 5. 하단 컨트롤 바 (초고속 3단계 소거법 평가 + 키보드 단축키 힌트) -->
         <section
           id="controlBar"
           class="control-bar"
@@ -657,7 +690,7 @@
             >
               <span class="rating-key">1</span>
               <span class="rating-label">모름</span>
-              <span class="rating-sub">오답 누적</span>
+              <span class="rating-sub">5장 뒤 재출제</span>
             </button>
             <button
               type="button"
@@ -666,7 +699,7 @@
             >
               <span class="rating-key">2</span>
               <span class="rating-label">애매함</span>
-              <span class="rating-sub">오답 누적</span>
+              <span class="rating-sub">맨 뒤로 이동</span>
             </button>
             <button
               type="button"
@@ -675,16 +708,7 @@
             >
               <span class="rating-key">3</span>
               <span class="rating-label">알겠음</span>
-              <span class="rating-sub">복습 완료</span>
-            </button>
-            <button
-              type="button"
-              class="rating-btn rating-easy"
-              data-rating="4"
-            >
-              <span class="rating-key">4</span>
-              <span class="rating-label">완벽함</span>
-              <span class="rating-sub">마스터</span>
+              <span class="rating-sub">숙련도 +1</span>
             </button>
           </div>
 
@@ -692,10 +716,10 @@
             <span class="shortcut-item"><kbd>Space</kbd> 뒤집기</span>
             <span class="shortcut-divider" aria-hidden="true">·</span>
             <span class="shortcut-item"
-              ><kbd>1</kbd>–<kbd>4</kbd> 기억 평가</span
+              ><kbd>1</kbd>–<kbd>3</kbd> 기억 평가</span
             >
             <span class="shortcut-divider" aria-hidden="true">·</span>
-            <span class="shortcut-item"><kbd>S</kbd> 발음 듣기</span>
+            <span class="shortcut-item"><kbd>R</kbd> 발음 듣기</span>
             <span class="shortcut-divider" aria-hidden="true">·</span>
             <span class="shortcut-item"><kbd>B</kbd> 북마크</span>
           </div>
@@ -784,7 +808,7 @@
       aria-atomic="true"
     ></div>
 
-    <script src="words.js?v=2" defer></script>
-    <script src="app.js?v=2" defer></script>
+    <script src="words.js?v=3" defer></script>
+    <script src="app.js?v=3" defer></script>
   </body>
 </html>

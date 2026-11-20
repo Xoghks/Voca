@@ -9,6 +9,8 @@
   const TAB_ORDER = ["all", "wrong-study", "wrong-archive"];
   const FLY_OUT_DURATION_MS = 280;
   const ENTER_ANIMATION_MS = 380;
+  const SMART_MIX_LIMIT = 30;
+  const MAX_LEVEL = 3;
   const MOBILE_LAYOUT_QUERY =
     "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
   const mobileMediaQuery = window.matchMedia(MOBILE_LAYOUT_QUERY);
@@ -83,6 +85,9 @@
     // Flashcard Front / Back
     cardDayBadge: document.getElementById("cardDayBadge"),
     cardPos: document.getElementById("cardPos"),
+    cardMasteryMeta: document.getElementById("cardMasteryMeta"),
+    cardLevelDots: document.getElementById("cardLevelDots"),
+    cardLastStudied: document.getElementById("cardLastStudied"),
     pronounceBtn: document.getElementById("pronounceBtn"),
     bookmarkBtn: document.getElementById("bookmarkBtn"),
     cardWord: document.getElementById("cardWord"),
@@ -99,6 +104,7 @@
     studyEmptyState: document.getElementById("studyEmptyState"),
     studyEmptyTitle: document.getElementById("studyEmptyTitle"),
     studyEmptyDesc: document.getElementById("studyEmptyDesc"),
+    restartSessionBtn: document.getElementById("restartSessionBtn"),
     returnToAllBtn: document.getElementById("returnToAllBtn"),
     controlBar: document.getElementById("controlBar"),
     ratingButtons: Array.from(document.querySelectorAll(".rating-btn")),
@@ -131,6 +137,8 @@
       wrongCount: 0,
       status: "new",
       bookmarked: false,
+      level: 0,
+      lastStudied: null,
     };
   }
 
@@ -146,7 +154,7 @@
 
   function createDefaultState() {
     return {
-      version: 1,
+      version: 2,
       theme: getSystemDefaultTheme(),
       hideMeanings: false,
       todayStats: {
@@ -164,9 +172,39 @@
     const wrongCount = Number.isFinite(Number(raw.wrongCount))
       ? Math.max(0, Math.floor(Number(raw.wrongCount)))
       : 0;
-    const status = VALID_STATUSES.has(raw.status) ? raw.status : "new";
     const bookmarked = Boolean(raw.bookmarked);
-    return { wrongCount, status, bookmarked };
+
+    let level = 0;
+    if (
+      raw.level !== undefined &&
+      raw.level !== null &&
+      Number.isFinite(Number(raw.level))
+    ) {
+      level = Math.min(MAX_LEVEL, Math.max(0, Math.floor(Number(raw.level))));
+    } else if (raw.status === "master") {
+      level = MAX_LEVEL;
+    } else if (raw.status === "good") {
+      level = 1;
+    }
+
+    let lastStudied = null;
+    if (
+      raw.lastStudied !== undefined &&
+      raw.lastStudied !== null &&
+      Number.isFinite(Number(raw.lastStudied)) &&
+      Number(raw.lastStudied) > 0
+    ) {
+      lastStudied = Math.floor(Number(raw.lastStudied));
+    }
+
+    let status = VALID_STATUSES.has(raw.status) ? raw.status : "new";
+    if (level >= MAX_LEVEL) {
+      status = "master";
+    } else if (status === "master") {
+      status = level > 0 ? "good" : wrongCount > 0 ? "wrong" : "new";
+    }
+
+    return { wrongCount, status, bookmarked, level, lastStudied };
   }
 
   function loadPersistedState() {
@@ -218,13 +256,17 @@
   // Ephemeral UI / Session State
   const session = {
     activeTab: "all", // 'all' | 'wrong-study' | 'wrong-archive'
-    dayFilter: "all", // 'all' | '1' | '2' | '3' | 'bookmarked'
+    dayFilter: "smart-mix", // 'smart-mix' | 'all' | '1' | '2' | '3' | 'bookmarked'
     queue: [],
+    initialTotal: 0,
+    passedCount: 0,
+    completed: false,
     currentIndex: 0,
     isFlipped: false,
     isAnimating: false,
     isMobileLayout: false,
     isMenuOpen: false,
+    flyOutTimer: null,
     menuCloseTimer: null,
     toastTimer: null,
     enterTimer: null,
@@ -389,19 +431,77 @@
   }
 
   /* ========================================================================
-     7. Data Filtering, Wrong-Note Predicate & Queue Management
+     7. Data Filtering, Smart Mix, Wrong-Note Predicate & Queue Management
      ======================================================================== */
-  function isWrongTarget(wordId) {
-    const progress = getWordProgress(wordId);
+  function hasStudyHistory(progress) {
     return (
-      progress.wrongCount >= 1 ||
-      progress.status === "wrong" ||
-      progress.status === "hard"
+      progress.lastStudied !== null ||
+      progress.level > 0 ||
+      progress.wrongCount > 0 ||
+      progress.status !== "new"
     );
   }
 
+  function formatLastStudied(timestamp) {
+    if (!timestamp) return "신규";
+    const studiedDate = new Date(timestamp);
+    if (Number.isNaN(studiedDate.getTime())) return "신규";
+
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    ).getTime();
+    const studiedStart = new Date(
+      studiedDate.getFullYear(),
+      studiedDate.getMonth(),
+      studiedDate.getDate(),
+    ).getTime();
+
+    const diffDays = Math.round((todayStart - studiedStart) / 86400000);
+    if (diffDays <= 0) return "오늘";
+    return `${diffDays}일 전`;
+  }
+
+  function renderLevelDots(container, level) {
+    if (!container) return;
+    const clampedLevel = Math.min(MAX_LEVEL, Math.max(0, Number(level) || 0));
+    const dots = container.querySelectorAll(".level-dot");
+    dots.forEach((dot, idx) => {
+      dot.classList.toggle("is-filled", idx < clampedLevel);
+    });
+    container.classList.toggle("is-mastered", clampedLevel >= MAX_LEVEL);
+  }
+
+  function createLevelDotsElement(level) {
+    const dotsWrap = document.createElement("span");
+    dotsWrap.className = "level-dots";
+    dotsWrap.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < MAX_LEVEL; i += 1) {
+      const dot = document.createElement("span");
+      dot.className = "level-dot";
+      dotsWrap.appendChild(dot);
+    }
+    renderLevelDots(dotsWrap, level);
+    return dotsWrap;
+  }
+
+  // 오답 집중 공략 탭: wrongCount >= 1 이면서 아직 level < 3 인 단어
+  function isWrongFocusTarget(wordId) {
+    const progress = getWordProgress(wordId);
+    return progress.wrongCount >= 1 && progress.level < MAX_LEVEL;
+  }
+
+  // 오답노트 보관함 & 누적 오답: wrongCount >= 1 인 단어
+  function isWrongArchiveTarget(wordId) {
+    return getWordProgress(wordId).wrongCount >= 1;
+  }
+
   function matchesDayFilter(word) {
-    if (session.dayFilter === "all") return true;
+    if (session.dayFilter === "smart-mix" || session.dayFilter === "all") {
+      return true;
+    }
     if (session.dayFilter === "bookmarked") {
       return getWordProgress(word.id).bookmarked;
     }
@@ -411,29 +511,102 @@
   function getFilteredPool(tab = session.activeTab) {
     return WORDS.filter((word) => {
       if (!matchesDayFilter(word)) return false;
-      if (tab === "wrong-study" || tab === "wrong-archive") {
-        return isWrongTarget(word.id);
+      if (tab === "wrong-study") {
+        return isWrongFocusTarget(word.id);
+      }
+      if (tab === "wrong-archive") {
+        return isWrongArchiveTarget(word.id);
       }
       return true;
     });
   }
 
-  function getAllWrongWords() {
-    return WORDS.filter((word) => isWrongTarget(word.id));
+  function getAllWrongArchiveWords() {
+    return WORDS.filter((word) => isWrongArchiveTarget(word.id));
+  }
+
+  function getAllWrongFocusWords() {
+    return WORDS.filter((word) => isWrongFocusTarget(word.id));
+  }
+
+  function buildSmartMixPool() {
+    // Tier 1: 기존 학습 기록이 있거나 오답노트에 등록됐지만 아직 level < 3 인 단어
+    const reviewTier = WORDS.filter((word) => {
+      const p = getWordProgress(word.id);
+      return p.level < MAX_LEVEL && (p.wrongCount >= 1 || hasStudyHistory(p));
+    }).sort((a, b) => {
+      const pa = getWordProgress(a.id);
+      const pb = getWordProgress(b.id);
+      const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
+      const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
+      if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
+      if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
+      if (pa.level !== pb.level) return pa.level - pb.level;
+      const aTime = pa.lastStudied ?? 0;
+      const bTime = pb.lastStudied ?? 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.id - b.id;
+    });
+
+    // Tier 2: 아직 한 번도 안 본 신규 단어 (level === 0 & 미학습)
+    const newTier = WORDS.filter((word) => {
+      const p = getWordProgress(word.id);
+      return p.level === 0 && !hasStudyHistory(p);
+    }).sort((a, b) => a.id - b.id);
+
+    const selectedReview = reviewTier.slice(0, SMART_MIX_LIMIT);
+    const remainingSlots = SMART_MIX_LIMIT - selectedReview.length;
+    const selectedNew =
+      remainingSlots > 0 ? newTier.slice(0, remainingSlots) : [];
+
+    if (selectedReview.length === 0) return selectedNew;
+    if (selectedNew.length === 0) return selectedReview;
+
+    // 복습(오답) 단어 2장당 신규 단어 1장 비율로 자연스럽게 혼합
+    const mixed = [];
+    let r = 0;
+    let n = 0;
+    while (r < selectedReview.length || n < selectedNew.length) {
+      for (let k = 0; k < 2 && r < selectedReview.length; k += 1) {
+        mixed.push(selectedReview[r]);
+        r += 1;
+      }
+      if (n < selectedNew.length) {
+        mixed.push(selectedNew[n]);
+        n += 1;
+      }
+    }
+    return mixed;
+  }
+
+  function cancelPendingFlyOut() {
+    if (session.flyOutTimer) {
+      clearTimeout(session.flyOutTimer);
+      session.flyOutTimer = null;
+    }
+    session.isAnimating = false;
   }
 
   function buildSessionQueue(options = {}) {
     const { preserveCurrentWordId = null, shuffle = false } = options;
-    const pool = getFilteredPool(session.activeTab);
+    cancelPendingFlyOut();
+
+    const pool =
+      session.activeTab === "all" && session.dayFilter === "smart-mix"
+        ? buildSmartMixPool()
+        : getFilteredPool(session.activeTab);
+
     let ids = pool.map((word) => word.id);
 
     if (session.activeTab === "wrong-study" && !shuffle) {
-      // Prioritize higher wrong counts first in focused wrong-answer study
+      // 오답 집중 공략: 오답 횟수 높은 순 -> 숙련도 낮은 순
       ids.sort((a, b) => {
         const pa = getWordProgress(a);
         const pb = getWordProgress(b);
-        if (pb.wrongCount !== pa.wrongCount)
+        if (pb.wrongCount !== pa.wrongCount) {
           return pb.wrongCount - pa.wrongCount;
+        }
+        if (pa.level !== pb.level) return pa.level - pb.level;
         return a - b;
       });
     }
@@ -443,6 +616,9 @@
     }
 
     session.queue = ids;
+    session.initialTotal = ids.length;
+    session.passedCount = 0;
+    session.completed = false;
     session.isFlipped = false;
 
     if (preserveCurrentWordId !== null) {
@@ -627,12 +803,15 @@
   function renderMobileHeaderStatus() {
     if (!dom.mobileStatusPill || !dom.mobileProgressText) return;
 
-    const isFiltered = session.dayFilter !== "all";
+    const isFiltered = session.dayFilter !== "smart-mix";
     dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
 
     if (dom.mobileFilterTag) {
       if (session.dayFilter === "bookmarked") {
         dom.mobileFilterTag.textContent = "★ 북마크";
+        dom.mobileFilterTag.hidden = false;
+      } else if (session.dayFilter === "all") {
+        dom.mobileFilterTag.textContent = "전체";
         dom.mobileFilterTag.hidden = false;
       } else if (isFiltered) {
         dom.mobileFilterTag.textContent = `Day ${session.dayFilter}`;
@@ -650,10 +829,12 @@
     if (session.activeTab === "wrong-archive") {
       const count = getFilteredPool("wrong-archive").length;
       dom.mobileProgressText.textContent = `오답 ${count}단어`;
+    } else if (session.completed) {
+      dom.mobileProgressText.textContent = "세션 완료";
     } else if (session.queue.length === 0) {
-      dom.mobileProgressText.textContent = "0 / 0";
+      dom.mobileProgressText.textContent = "0장";
     } else {
-      dom.mobileProgressText.textContent = `${session.currentIndex + 1} / ${session.queue.length}`;
+      dom.mobileProgressText.textContent = `남은 ${session.queue.length}장`;
     }
   }
 
@@ -664,12 +845,14 @@
     ensureTodayStats();
     const totalWords = WORDS.length;
     let masteredCount = 0;
-    let wrongNoteCount = 0;
+    let wrongFocusCount = 0;
+    let wrongArchiveCount = 0;
 
     for (const word of WORDS) {
       const progress = getWordProgress(word.id);
-      if (progress.status === "master") masteredCount += 1;
-      if (isWrongTarget(word.id)) wrongNoteCount += 1;
+      if (progress.level >= MAX_LEVEL) masteredCount += 1;
+      if (isWrongFocusTarget(word.id)) wrongFocusCount += 1;
+      if (isWrongArchiveTarget(word.id)) wrongArchiveCount += 1;
     }
 
     const masteryPercent =
@@ -682,7 +865,7 @@
       dom.headerMasteryBar.style.width = `${masteryPercent}%`;
     }
     dom.statMasteryTrack.setAttribute("aria-valuenow", String(masteryPercent));
-    dom.statWrongCount.textContent = String(wrongNoteCount);
+    dom.statWrongCount.textContent = String(wrongArchiveCount);
 
     // Update segmented tab badges
     const updateBadge = (el, count) => {
@@ -690,8 +873,8 @@
       el.textContent = String(count);
       el.hidden = count === 0;
     };
-    updateBadge(dom.tabWrongStudyCount, wrongNoteCount);
-    updateBadge(dom.tabArchiveCount, wrongNoteCount);
+    updateBadge(dom.tabWrongStudyCount, wrongFocusCount);
+    updateBadge(dom.tabArchiveCount, wrongArchiveCount);
 
     // Update Day filter total label
     const allOption = dom.dayFilter.querySelector('option[value="all"]');
@@ -770,9 +953,12 @@
     const { animateEnter = false } = options;
 
     const isWrongMode = session.activeTab === "wrong-study";
+    const isSmartMix = !isWrongMode && session.dayFilter === "smart-mix";
     dom.deckModeBadge.textContent = isWrongMode
       ? "오답 집중 공략"
-      : "전체 학습";
+      : isSmartMix
+        ? "스마트 믹스"
+        : "전체 학습";
     dom.deckModeBadge.classList.toggle("is-wrong-mode", isWrongMode);
 
     const word = getCurrentWord();
@@ -784,35 +970,94 @@
     dom.shuffleBtn.disabled = session.queue.length <= 1;
 
     if (!hasWords) {
-      dom.cardProgressText.textContent = "0 / 0";
-      if (isWrongMode) {
-        dom.studyEmptyTitle.textContent = "공략할 오답 단어가 없습니다";
-        dom.studyEmptyDesc.textContent =
-          session.dayFilter === "all"
-            ? "현재 누적된 오답 단어가 없습니다. 전체 학습에서 단어를 암기하며 어려운 단어를 모아 보세요."
-            : "선택한 필터 조건에 해당하는 오답 단어가 없습니다. 필터를 변경하거나 전체 학습으로 이동해 보세요.";
-      } else if (session.dayFilter === "bookmarked") {
-        dom.studyEmptyTitle.textContent = "북마크한 단어가 없습니다";
-        dom.studyEmptyDesc.textContent =
-          "학습 중 카드 우측 상단의 별표(B)를 눌러 중요 단어를 북마크해 보세요.";
+      if (session.completed) {
+        dom.studyEmptyState.classList.add("is-complete");
+        dom.cardProgressText.textContent = "세션 완료";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = false;
+        }
+
+        if (isWrongMode) {
+          dom.studyEmptyTitle.textContent = "오답 집중 공략 완료!";
+          dom.studyEmptyDesc.textContent = `총 ${session.passedCount}개 오답 단어를 모두 통과했습니다. 3회 연속 통과 시 마스터(Lv.3)가 됩니다.`;
+          dom.returnToAllBtn.hidden = false;
+          dom.returnToAllBtn.className = "secondary-pill-btn";
+          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+        } else {
+          dom.studyEmptyTitle.textContent = "세션 완료!";
+          dom.studyEmptyDesc.textContent = `총 ${session.passedCount}개 단어를 모두 통과했습니다. 서로 다른 세션에서 3회 연속 통과하면 마스터(Lv.3)가 됩니다.`;
+          if (session.dayFilter === "smart-mix") {
+            dom.returnToAllBtn.hidden = true;
+          } else {
+            dom.returnToAllBtn.hidden = false;
+            dom.returnToAllBtn.className = "secondary-pill-btn";
+            dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+          }
+        }
       } else {
-        dom.studyEmptyTitle.textContent = "학습할 단어가 없습니다";
-        dom.studyEmptyDesc.textContent =
-          "다른 Day 필터를 선택해 학습을 이어가 보세요.";
+        dom.studyEmptyState.classList.remove("is-complete");
+        dom.cardProgressText.textContent = "0장";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
+        }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+
+        if (isWrongMode) {
+          dom.studyEmptyTitle.textContent = "공략할 오답 단어가 없습니다";
+          dom.studyEmptyDesc.textContent =
+            session.dayFilter === "smart-mix" || session.dayFilter === "all"
+              ? "오답노트에 남아 있는 미마스터(Lv.3 미만) 단어가 없습니다. 스마트 믹스에서 새 단어를 학습해 보세요."
+              : "선택한 필터 조건에 해당하는 미마스터 오답 단어가 없습니다. 필터를 변경하거나 스마트 믹스로 이동해 보세요.";
+          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+        } else if (session.dayFilter === "bookmarked") {
+          dom.studyEmptyTitle.textContent = "북마크한 단어가 없습니다";
+          dom.studyEmptyDesc.textContent =
+            "학습 중 카드 우측 상단의 별표(B)를 눌러 중요 단어를 북마크해 보세요.";
+          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+        } else if (session.dayFilter === "smart-mix") {
+          dom.studyEmptyTitle.textContent = "모든 단어를 마스터했습니다!";
+          dom.studyEmptyDesc.textContent =
+            "전체 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요.";
+          dom.returnToAllBtn.textContent = "전체 Day로 복습하기";
+        } else {
+          dom.studyEmptyTitle.textContent = "학습할 단어가 없습니다";
+          dom.studyEmptyDesc.textContent =
+            "다른 Day 필터를 선택해 학습을 이어가 보세요.";
+          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+        }
       }
+
       renderMobileHeaderStatus();
       return;
     }
 
+    dom.studyEmptyState.classList.remove("is-complete");
+    if (dom.restartSessionBtn) {
+      dom.restartSessionBtn.hidden = true;
+    }
+
     const progress = getWordProgress(word.id);
 
-    dom.cardProgressText.textContent = `${session.currentIndex + 1} / ${session.queue.length}`;
+    dom.cardProgressText.textContent = `남은 ${session.queue.length}장 · 통과 ${session.passedCount}/${session.initialTotal}`;
 
     // Front face
     dom.cardDayBadge.textContent = `Day ${word.day}`;
     dom.cardPos.textContent = word.pos;
     dom.cardWord.textContent = word.word;
     dom.cardPhonetic.textContent = word.phonetic;
+
+    const lastStudiedLabel = formatLastStudied(progress.lastStudied);
+    renderLevelDots(dom.cardLevelDots, progress.level);
+    if (dom.cardLastStudied) {
+      dom.cardLastStudied.textContent = lastStudiedLabel;
+    }
+    if (dom.cardMasteryMeta) {
+      dom.cardMasteryMeta.setAttribute(
+        "aria-label",
+        `숙련도 ${progress.level}단계 / ${MAX_LEVEL}단계 · ${lastStudiedLabel}`,
+      );
+    }
 
     dom.bookmarkBtn.classList.toggle("is-bookmarked", progress.bookmarked);
     dom.bookmarkBtn.setAttribute("aria-pressed", String(progress.bookmarked));
@@ -838,16 +1083,13 @@
       const pa = getWordProgress(a.id);
       const pb = getWordProgress(b.id);
       if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
-
-      const priority = { wrong: 2, hard: 1 };
-      const diff = (priority[pb.status] || 0) - (priority[pa.status] || 0);
-      if (diff !== 0) return diff;
+      if (pa.level !== pb.level) return pa.level - pb.level;
       return a.id - b.id;
     });
 
-    const totalWrongAll = getAllWrongWords().length;
+    const totalWrongAll = getAllWrongArchiveWords().length;
     const filterNote =
-      session.dayFilter === "all"
+      session.dayFilter === "smart-mix" || session.dayFilter === "all"
         ? ""
         : session.dayFilter === "bookmarked"
           ? " (북마크 필터)"
@@ -920,14 +1162,30 @@
       meaningWrap.append(meaningEl, exampleEl);
       mainDiv.append(topDiv, meaningWrap);
 
-      // Right action controls
+      // Right action controls (level dots + wrong count + audio/reset buttons)
       const actionsDiv = document.createElement("div");
       actionsDiv.className = "archive-item-actions";
 
+      const badgesDiv = document.createElement("div");
+      badgesDiv.className = "archive-item-badges";
+
+      const levelBadge = document.createElement("span");
+      levelBadge.className = "archive-level-badge";
+      levelBadge.title = `숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
+      levelBadge.setAttribute(
+        "aria-label",
+        `숙련도 ${progress.level}단계 / ${MAX_LEVEL}단계`,
+      );
+      levelBadge.appendChild(createLevelDotsElement(progress.level));
+
       const wrongPill = document.createElement("span");
       wrongPill.className = "archive-wrong-pill";
-      wrongPill.textContent =
-        progress.wrongCount > 0 ? `오답 ${progress.wrongCount}회` : "복습 필요";
+      wrongPill.textContent = `오답 ${progress.wrongCount}회`;
+
+      badgesDiv.append(levelBadge, wrongPill);
+
+      const btnsDiv = document.createElement("div");
+      btnsDiv.className = "archive-item-btns";
 
       const audioBtn = document.createElement("button");
       audioBtn.type = "button";
@@ -954,7 +1212,8 @@
         '<polyline points="20 6 9 17 4 12"></polyline>' +
         "</svg>";
 
-      actionsDiv.append(wrongPill, audioBtn, removeBtn);
+      btnsDiv.append(audioBtn, removeBtn);
+      actionsDiv.append(badgesDiv, btnsDiv);
       li.append(mainDiv, actionsDiv);
       fragment.appendChild(li);
     }
@@ -990,10 +1249,11 @@
     if (!word) return;
 
     const rating = Number(ratingLevel);
-    if (![1, 2, 3, 4].includes(rating)) return;
+    if (![1, 2, 3].includes(rating)) return;
 
     session.isAnimating = true;
     const progress = getWordProgress(word.id);
+    progress.lastStudied = Date.now();
 
     ensureTodayStats();
     persistedState.todayStats.count += 1;
@@ -1002,31 +1262,28 @@
     let toastVariant = "default";
 
     if (rating === 1) {
-      // 1: 모름 -> wrongCount + 1, status 'wrong', 5장 뒤에 즉시 재삽입
+      // 1: 모름 -> level 0 초기화, wrongCount + 1, 5장 뒤에 즉시 재삽입
+      progress.level = 0;
       progress.wrongCount += 1;
       progress.status = "wrong";
-      const insertIndex = Math.min(
-        session.currentIndex + 6,
-        session.queue.length,
-      );
-      session.queue.splice(insertIndex, 0, word.id);
-      toastMsg = `"${word.word}" 오답 누적 (${progress.wrongCount}회) · 5장 뒤 재출제`;
+      toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · 5장 뒤 재출제`;
       toastVariant = "error";
     } else if (rating === 2) {
-      // 2: 애매함 -> wrongCount + 1, status 'hard', 세션 큐 맨 뒤로 이동
+      // 2: 애매함 -> level 0 초기화, wrongCount + 1, 큐 맨 뒤로 이동
+      progress.level = 0;
       progress.wrongCount += 1;
       progress.status = "hard";
-      session.queue.push(word.id);
       toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 큐 맨 뒤로 이동`;
     } else if (rating === 3) {
-      // 3: 알겠음 -> status 'good'
-      progress.status = "good";
-      toastMsg = `"${word.word}" 복습 완료`;
-    } else if (rating === 4) {
-      // 4: 완벽함 -> status 'master'
-      progress.status = "master";
-      toastMsg = `"${word.word}" 마스터 달성!`;
-      toastVariant = "success";
+      // 3: 알겠음 -> level +1 (최대 3), 현재 세션 큐에서 즉시 소거
+      progress.level = Math.min(MAX_LEVEL, progress.level + 1);
+      progress.status = progress.level >= MAX_LEVEL ? "master" : "good";
+      if (progress.level >= MAX_LEVEL) {
+        toastMsg = `"${word.word}" 마스터 달성! (Lv.3)`;
+        toastVariant = "success";
+      } else {
+        toastMsg = `"${word.word}" 통과! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
+      }
     }
 
     savePersistedState();
@@ -1047,16 +1304,35 @@
       flyDirection === "left" ? "fly-out-left" : "fly-out-right",
     );
 
-    setTimeout(() => {
-      session.currentIndex += 1;
+    session.flyOutTimer = setTimeout(() => {
+      session.flyOutTimer = null;
+      const idx = session.currentIndex;
+      const [ratedId] = session.queue.splice(idx, 1);
 
-      if (session.currentIndex >= session.queue.length) {
-        buildSessionQueue();
-        if (session.queue.length > 0) {
-          showToast(
-            "현재 덱을 모두 완료했습니다! 처음부터 다시 시작합니다.",
-            "success",
-          );
+      if (ratedId !== undefined) {
+        if (rating === 1) {
+          const insertIdx = Math.min(idx + 5, session.queue.length);
+          session.queue.splice(insertIdx, 0, ratedId);
+          if (session.queue.length > 1 && session.queue[idx] === ratedId) {
+            session.currentIndex = 0;
+          } else {
+            session.currentIndex = idx >= session.queue.length ? 0 : idx;
+          }
+        } else if (rating === 2) {
+          session.queue.push(ratedId);
+          if (session.queue.length > 1 && idx >= session.queue.length - 1) {
+            session.currentIndex = 0;
+          } else {
+            session.currentIndex = idx;
+          }
+        } else if (rating === 3) {
+          session.passedCount += 1;
+          if (session.queue.length === 0) {
+            session.completed = true;
+            session.currentIndex = 0;
+          } else {
+            session.currentIndex = idx >= session.queue.length ? 0 : idx;
+          }
         }
       }
 
@@ -1088,8 +1364,11 @@
     // If user unbookmarks while inside the bookmarked-only filter, refresh queue
     if (session.dayFilter === "bookmarked" && !progress.bookmarked) {
       session.queue = session.queue.filter((id) => id !== word.id);
-      if (session.currentIndex >= session.queue.length) {
-        session.currentIndex = Math.max(0, session.queue.length - 1);
+      session.initialTotal = Math.max(0, session.initialTotal - 1);
+      if (session.queue.length === 0) {
+        session.currentIndex = 0;
+      } else if (session.currentIndex >= session.queue.length) {
+        session.currentIndex = session.queue.length - 1;
       }
       resetCardFlipInstant();
       renderCurrentCard({ animateEnter: true });
@@ -1112,7 +1391,12 @@
     const progress = getWordProgress(wordId);
     progress.wrongCount = 0;
     if (progress.status === "wrong" || progress.status === "hard") {
-      progress.status = "new";
+      progress.status =
+        progress.level >= MAX_LEVEL
+          ? "master"
+          : progress.level > 0
+            ? "good"
+            : "new";
     }
 
     savePersistedState();
@@ -1122,7 +1406,7 @@
   }
 
   function resetAllWrong() {
-    const wrongWords = getAllWrongWords();
+    const wrongWords = getAllWrongArchiveWords();
     if (wrongWords.length === 0) return;
 
     const confirmed = window.confirm(
@@ -1134,7 +1418,12 @@
       const progress = getWordProgress(word.id);
       progress.wrongCount = 0;
       if (progress.status === "wrong" || progress.status === "hard") {
-        progress.status = "new";
+        progress.status =
+          progress.level >= MAX_LEVEL
+            ? "master"
+            : progress.level > 0
+              ? "good"
+              : "new";
       }
     }
 
@@ -1184,7 +1473,7 @@
     const payload = {
       app: "Lexicon Bridge Vocabulary",
       exportedAt: new Date().toISOString(),
-      version: 1,
+      version: 2,
       data: persistedState,
     };
 
@@ -1469,7 +1758,7 @@
     dom.shortcutHintBar.innerHTML =
       '<span class="shortcut-item"><kbd>Space</kbd> 뒤집기</span>' +
       '<span class="shortcut-divider" aria-hidden="true">·</span>' +
-      '<span class="shortcut-item"><kbd>1</kbd>–<kbd>4</kbd> 기억 평가</span>' +
+      '<span class="shortcut-item"><kbd>1</kbd>–<kbd>3</kbd> 기억 평가</span>' +
       '<span class="shortcut-divider" aria-hidden="true">·</span>' +
       '<span class="shortcut-item"><kbd>R</kbd> 발음 듣기</span>' +
       '<span class="shortcut-divider" aria-hidden="true">·</span>' +
@@ -1506,7 +1795,7 @@
       return;
     }
 
-    if (key === "1" || key === "2" || key === "3" || key === "4") {
+    if (key === "1" || key === "2" || key === "3") {
       e.preventDefault();
       const targetBtn = dom.ratingButtons.find(
         (btn) => btn.dataset.rating === key,
@@ -1594,10 +1883,25 @@
 
     // Deck controls
     dom.shuffleBtn.addEventListener("click", shuffleCurrentSession);
+    if (dom.restartSessionBtn) {
+      dom.restartSessionBtn.addEventListener("click", () => {
+        buildSessionQueue();
+        renderAll({ animateEnter: true });
+      });
+    }
     dom.returnToAllBtn.addEventListener("click", () => {
-      session.dayFilter = "all";
-      dom.dayFilter.value = "all";
-      session.activeTab = "all";
+      if (
+        session.activeTab === "all" &&
+        session.dayFilter === "smart-mix" &&
+        !session.completed
+      ) {
+        session.dayFilter = "all";
+        dom.dayFilter.value = "all";
+      } else {
+        session.dayFilter = "smart-mix";
+        dom.dayFilter.value = "smart-mix";
+        session.activeTab = "all";
+      }
       buildSessionQueue();
       renderAll({ animateEnter: true });
     });
@@ -1634,7 +1938,7 @@
       toggleBookmark();
     });
 
-    // 4-Level rating buttons
+    // 3-Level elimination rating buttons
     dom.ratingButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         rateCurrentCard(Number(btn.dataset.rating));
