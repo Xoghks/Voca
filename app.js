@@ -6,10 +6,20 @@
      ======================================================================== */
   const STORAGE_KEY = "lexicon_vocab_app_v1";
   const VALID_STATUSES = new Set(["new", "wrong", "hard", "good", "master"]);
+  const VALID_STREAM_FILTERS = new Set([
+    "smart-mix",
+    "new-only",
+    "review-only",
+    "bookmarked",
+  ]);
   const TAB_ORDER = ["all", "wrong-study", "wrong-archive"];
   const FLY_OUT_DURATION_MS = 280;
   const ENTER_ANIMATION_MS = 380;
-  const SMART_MIX_LIMIT = 30;
+  const STREAM_BATCH_SIZE = 20;
+  const STREAM_REFILL_THRESHOLD = 5;
+  const WRONG_REINSERT_OFFSET = 5;
+  const HARD_REINSERT_MIN = 15;
+  const HARD_REINSERT_MAX = 20;
   const MAX_LEVEL = 3;
   const MOBILE_LAYOUT_QUERY =
     "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
@@ -64,7 +74,6 @@
         const uid = `${key}_${localId}`;
         if (nextWordMap.has(uid)) continue;
 
-        const parsedDay = Number(rawWord.day);
         const normalizedWord = {
           uid,
           id: uid,
@@ -72,10 +81,6 @@
           deckKey: key,
           deckTitle: title,
           orderIndex: orderSeq,
-          day:
-            Number.isFinite(parsedDay) && parsedDay >= 1
-              ? Math.floor(parsedDay)
-              : 1,
           word: String(rawWord.word || ""),
           phonetic: String(rawWord.phonetic || ""),
           pos: String(rawWord.pos || ""),
@@ -158,12 +163,13 @@
     tabWrongStudyCount: document.getElementById("tabWrongStudyCount"),
     tabArchiveCount: document.getElementById("tabArchiveCount"),
     filterWrapper: document.getElementById("filterWrapper"),
-    dayFilter: document.getElementById("dayFilter"),
+    streamFilter: document.getElementById("streamFilter"),
 
     // Study View
     studyView: document.getElementById("studyView"),
     deckMeta: document.querySelector(".deck-meta"),
     deckModeBadge: document.getElementById("deckModeBadge"),
+    paceChip: document.getElementById("paceChip"),
     cardProgressText: document.getElementById("cardProgressText"),
     shuffleBtn: document.getElementById("shuffleBtn"),
     flashcardStage: document.getElementById("flashcardStage"),
@@ -172,7 +178,6 @@
 
     // Flashcard Front / Back
     cardDeckBadge: document.getElementById("cardDeckBadge"),
-    cardDayBadge: document.getElementById("cardDayBadge"),
     cardPos: document.getElementById("cardPos"),
     cardMasteryMeta: document.getElementById("cardMasteryMeta"),
     cardLevelDots: document.getElementById("cardLevelDots"),
@@ -376,11 +381,8 @@
   const session = {
     activeDeck: "all", // 'all' | deck.key ('toeic', 'toefl', ...)
     activeTab: "all", // 'all' | 'wrong-study' | 'wrong-archive'
-    dayFilter: "smart-mix", // 'smart-mix' | 'all' | '1' | '2' | ... | 'bookmarked'
+    streamFilter: "smart-mix", // 'smart-mix' | 'new-only' | 'review-only' | 'bookmarked'
     queue: [],
-    initialTotal: 0,
-    passedCount: 0,
-    completed: false,
     currentIndex: 0,
     isFlipped: false,
     isAnimating: false,
@@ -390,6 +392,7 @@
     menuCloseTimer: null,
     toastTimer: null,
     enterTimer: null,
+    paceBumpTimer: null,
   };
 
   function ensureTodayStats() {
@@ -645,6 +648,16 @@
     return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
   }
 
+  // 신규 단어: 한 번도 학습하지 않은 단어 (lastStudied === null)
+  function isNewWordProgress(progress) {
+    return progress.lastStudied === null;
+  }
+
+  // 복습(레벨 1~2) 집중 대상: 한두 번 맞혔지만 아직 level 3 마스터 미만
+  function isReviewLevelProgress(progress) {
+    return progress.level >= 1 && progress.level < MAX_LEVEL;
+  }
+
   // 오답 집중 공략 탭: wrongCount >= 1 이면서 아직 level < 3 인 단어
   function isWrongFocusTarget(wordId) {
     const progress = getWordProgress(wordId);
@@ -656,90 +669,189 @@
     return getWordProgress(wordId).wrongCount >= 1;
   }
 
-  function matchesDayFilter(word) {
-    if (session.dayFilter === "smart-mix" || session.dayFilter === "all") {
-      return true;
-    }
-    if (session.dayFilter === "bookmarked") {
-      return getWordProgress(word.id).bookmarked;
-    }
-    return String(word.day) === String(session.dayFilter);
-  }
-
-  function getFilteredPool(tab = session.activeTab) {
-    const deckWords = getActiveDeckWords();
-    return deckWords.filter((word) => {
-      if (!matchesDayFilter(word)) return false;
-      if (tab === "wrong-study") {
-        return isWrongFocusTarget(word.id);
-      }
-      if (tab === "wrong-archive") {
-        return isWrongArchiveTarget(word.id);
-      }
-      return true;
-    });
-  }
-
   function getActiveDeckWrongArchiveWords() {
     return getActiveDeckWords().filter((word) => isWrongArchiveTarget(word.id));
   }
 
-  function buildSmartMixPool() {
+  function getArchiveFilteredWords() {
+    const words = getActiveDeckWrongArchiveWords();
+    if (session.streamFilter === "bookmarked") {
+      return words.filter((word) => getWordProgress(word.id).bookmarked);
+    }
+    return words;
+  }
+
+  function isWordEligibleForCurrentStream(word, tab = session.activeTab) {
+    const p = getWordProgress(word.id);
+    if (tab === "wrong-study") {
+      if (!isWrongFocusTarget(word.id)) return false;
+      if (session.streamFilter === "bookmarked") return p.bookmarked;
+      return true;
+    }
+    if (tab === "wrong-archive") {
+      if (!isWrongArchiveTarget(word.id)) return false;
+      if (session.streamFilter === "bookmarked") return p.bookmarked;
+      return true;
+    }
+
+    // Main study tab: 상태별 스트림 필터 적용
+    if (session.streamFilter === "new-only") {
+      return isNewWordProgress(p);
+    }
+    if (session.streamFilter === "review-only") {
+      return isReviewLevelProgress(p);
+    }
+    if (session.streamFilter === "bookmarked") {
+      return p.bookmarked;
+    }
+    // smart-mix (기본): 복습 필요(level 1~2 또는 오답/학습 기록) + 미학습 신규(level 0)
+    return p.level < MAX_LEVEL;
+  }
+
+  function getTotalEligibleCount(tab = session.activeTab) {
+    return getActiveDeckWords().filter((word) =>
+      isWordEligibleForCurrentStream(word, tab),
+    ).length;
+  }
+
+  function sortReviewCandidates(list, preferExcludeId = null) {
+    return list.sort((a, b) => {
+      if (preferExcludeId !== null) {
+        const aLast = a.id === preferExcludeId ? 1 : 0;
+        const bLast = b.id === preferExcludeId ? 1 : 0;
+        if (aLast !== bLast) return aLast - bLast;
+      }
+      const pa = getWordProgress(a.id);
+      const pb = getWordProgress(b.id);
+      const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
+      const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
+      if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
+      if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
+      if (pa.level !== pb.level) return pa.level - pb.level;
+      const aTime = pa.lastStudied ?? 0;
+      const bTime = pb.lastStudied ?? 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return compareWordsByOrder(a, b);
+    });
+  }
+
+  function buildNextStreamBatch(options = {}) {
+    const {
+      excludeIds = new Set(),
+      preferExcludeId = null,
+      batchSize = STREAM_BATCH_SIZE,
+      tab = session.activeTab,
+    } = options;
+
     const deckWords = getActiveDeckWords();
+    const available = deckWords.filter(
+      (word) =>
+        !excludeIds.has(word.id) && isWordEligibleForCurrentStream(word, tab),
+    );
 
-    // Tier 1: 기존 학습 기록이 있거나 오답노트에 등록됐지만 아직 level < 3 인 단어
-    const reviewTier = deckWords
+    if (available.length === 0) return [];
+
+    // 오답 집중 공략 탭
+    if (tab === "wrong-study") {
+      return sortReviewCandidates([...available], preferExcludeId)
+        .slice(0, batchSize)
+        .map((w) => w.id);
+    }
+
+    // 신규 단어 집중: 미학습 단어 순서대로
+    if (session.streamFilter === "new-only") {
+      return [...available]
+        .sort(compareWordsByOrder)
+        .slice(0, batchSize)
+        .map((w) => w.id);
+    }
+
+    // 복습(레벨 1~2) 집중 또는 북마크 스트림
+    if (
+      session.streamFilter === "review-only" ||
+      session.streamFilter === "bookmarked"
+    ) {
+      return sortReviewCandidates([...available], preferExcludeId)
+        .slice(0, batchSize)
+        .map((w) => w.id);
+    }
+
+    // 스마트 믹스 (기본): 복습 필요(level 1~2 / 오답 / 기학습) + 미학습 신규 혼합
+    const reviewTier = sortReviewCandidates(
+      available.filter((word) => {
+        const p = getWordProgress(word.id);
+        return p.level >= 1 || p.wrongCount >= 1 || hasStudyHistory(p);
+      }),
+      preferExcludeId,
+    );
+
+    const newTier = available
       .filter((word) => {
         const p = getWordProgress(word.id);
-        return p.level < MAX_LEVEL && (p.wrongCount >= 1 || hasStudyHistory(p));
-      })
-      .sort((a, b) => {
-        const pa = getWordProgress(a.id);
-        const pb = getWordProgress(b.id);
-        const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
-        const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
-        if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
-        if (pb.wrongCount !== pa.wrongCount) {
-          return pb.wrongCount - pa.wrongCount;
-        }
-        if (pa.level !== pb.level) return pa.level - pb.level;
-        const aTime = pa.lastStudied ?? 0;
-        const bTime = pb.lastStudied ?? 0;
-        if (aTime !== bTime) return aTime - bTime;
-        return compareWordsByOrder(a, b);
-      });
-
-    // Tier 2: 아직 한 번도 안 본 신규 단어 (level === 0 & 미학습)
-    const newTier = deckWords
-      .filter((word) => {
-        const p = getWordProgress(word.id);
-        return p.level === 0 && !hasStudyHistory(p);
+        return p.level === 0 && p.wrongCount === 0 && !hasStudyHistory(p);
       })
       .sort(compareWordsByOrder);
 
-    const selectedReview = reviewTier.slice(0, SMART_MIX_LIMIT);
-    const remainingSlots = SMART_MIX_LIMIT - selectedReview.length;
-    const selectedNew =
-      remainingSlots > 0 ? newTier.slice(0, remainingSlots) : [];
+    if (reviewTier.length === 0) {
+      return newTier.slice(0, batchSize).map((w) => w.id);
+    }
+    if (newTier.length === 0) {
+      return reviewTier.slice(0, batchSize).map((w) => w.id);
+    }
 
-    if (selectedReview.length === 0) return selectedNew;
-    if (selectedNew.length === 0) return selectedReview;
-
-    // 복습(오답) 단어 2장당 신규 단어 1장 비율로 자연스럽게 혼합
+    // 복습 단어 2장당 신규 단어 1장 비율로 끊김 없이 혼합
     const mixed = [];
     let r = 0;
     let n = 0;
-    while (r < selectedReview.length || n < selectedNew.length) {
-      for (let k = 0; k < 2 && r < selectedReview.length; k += 1) {
-        mixed.push(selectedReview[r]);
+    while (
+      mixed.length < batchSize &&
+      (r < reviewTier.length || n < newTier.length)
+    ) {
+      for (let k = 0; k < 2 && r < reviewTier.length && mixed.length < batchSize; k += 1) {
+        mixed.push(reviewTier[r].id);
         r += 1;
       }
-      if (n < selectedNew.length) {
-        mixed.push(selectedNew[n]);
+      if (n < newTier.length && mixed.length < batchSize) {
+        mixed.push(newTier[n].id);
         n += 1;
       }
     }
     return mixed;
+  }
+
+  function refillStreamIfNeeded(justRatedId = null, forceExcludeRated = false) {
+    if (session.activeTab === "wrong-archive") return;
+    if (session.queue.length > STREAM_REFILL_THRESHOLD) return;
+
+    const excludeIds = new Set(session.queue);
+    // 큐에 다른 카드가 남아 있거나, 방금 틀린 카드를 별도로 재삽입할 예정이면 중복 방지
+    if (justRatedId !== null && (forceExcludeRated || session.queue.length > 0)) {
+      excludeIds.add(justRatedId);
+    }
+
+    let nextBatch = buildNextStreamBatch({
+      excludeIds,
+      preferExcludeId: justRatedId,
+      batchSize: STREAM_BATCH_SIZE,
+    });
+
+    // 큐가 완전히 비었고 방금 통과한 단어가 유일한 미마스터 후보라면 자연스럽게 이어 붙임
+    if (
+      nextBatch.length === 0 &&
+      session.queue.length === 0 &&
+      !forceExcludeRated &&
+      justRatedId !== null
+    ) {
+      nextBatch = buildNextStreamBatch({
+        excludeIds: new Set(),
+        preferExcludeId: justRatedId,
+        batchSize: STREAM_BATCH_SIZE,
+      });
+    }
+
+    if (nextBatch.length > 0) {
+      session.queue.push(...nextBatch);
+    }
   }
 
   function cancelPendingFlyOut() {
@@ -754,36 +866,16 @@
     const { preserveCurrentWordId = null, shuffle = false } = options;
     cancelPendingFlyOut();
 
-    const pool =
-      session.activeTab === "all" && session.dayFilter === "smart-mix"
-        ? buildSmartMixPool()
-        : getFilteredPool(session.activeTab);
-
-    let ids = pool.map((word) => word.id);
-
-    if (session.activeTab === "wrong-study" && !shuffle) {
-      // 오답 집중 공략: 오답 횟수 높은 순 -> 숙련도 낮은 순
-      ids.sort((a, b) => {
-        const pa = getWordProgress(a);
-        const pb = getWordProgress(b);
-        if (pb.wrongCount !== pa.wrongCount) {
-          return pb.wrongCount - pa.wrongCount;
-        }
-        if (pa.level !== pb.level) return pa.level - pb.level;
-        const wa = WORD_MAP.get(a);
-        const wb = WORD_MAP.get(b);
-        return (wa ? wa.orderIndex : 0) - (wb ? wb.orderIndex : 0);
-      });
-    }
+    let ids = buildNextStreamBatch({
+      excludeIds: new Set(),
+      batchSize: STREAM_BATCH_SIZE,
+    });
 
     if (shuffle && ids.length > 1) {
       ids = fisherYatesShuffle(ids);
     }
 
     session.queue = ids;
-    session.initialTotal = ids.length;
-    session.passedCount = 0;
-    session.completed = false;
     session.isFlipped = false;
 
     if (preserveCurrentWordId !== null) {
@@ -792,6 +884,22 @@
     } else {
       session.currentIndex = 0;
     }
+  }
+
+  function startMasteredFreeReview() {
+    const deckWords = getActiveDeckWords();
+    if (deckWords.length === 0) return;
+
+    cancelPendingFlyOut();
+    const ids = fisherYatesShuffle(deckWords.map((w) => w.id)).slice(
+      0,
+      STREAM_BATCH_SIZE,
+    );
+    session.queue = ids;
+    session.currentIndex = 0;
+    session.isFlipped = false;
+    renderAll({ animateEnter: true });
+    showToast("마스터한 단어 가볍게 복습을 시작합니다.");
   }
 
   function fisherYatesShuffle(list) {
@@ -1009,72 +1117,97 @@
     dom.deckSelector.appendChild(fragment);
   }
 
-  function renderDayFilterOptions() {
-    if (!dom.dayFilter) return;
+  function getStreamFilterLabel(filter = session.streamFilter) {
+    if (filter === "new-only") return "신규 단어 집중";
+    if (filter === "review-only") return "복습(레벨 1~2) 집중";
+    if (filter === "bookmarked") return "북마크 단어";
+    return "스마트 믹스";
+  }
+
+  function renderStreamFilterOptions() {
+    if (!dom.streamFilter) return;
 
     const deckWords = getActiveDeckWords();
-    const dayCounts = new Map();
+    let smartCount = 0;
+    let newCount = 0;
+    let reviewCount = 0;
     let bookmarkedCount = 0;
 
     for (const word of deckWords) {
-      dayCounts.set(word.day, (dayCounts.get(word.day) || 0) + 1);
-      if (getWordProgress(word.id).bookmarked) {
-        bookmarkedCount += 1;
-      }
+      const p = getWordProgress(word.id);
+      if (p.level < MAX_LEVEL) smartCount += 1;
+      if (isNewWordProgress(p)) newCount += 1;
+      if (isReviewLevelProgress(p)) reviewCount += 1;
+      if (p.bookmarked) bookmarkedCount += 1;
     }
 
-    const sortedDays = Array.from(dayCounts.keys()).sort((a, b) => a - b);
-    const validValues = new Set([
-      "smart-mix",
-      "all",
-      "bookmarked",
-      ...sortedDays.map((day) => String(day)),
-    ]);
-
-    if (!validValues.has(String(session.dayFilter))) {
-      session.dayFilter = "smart-mix";
+    if (!VALID_STREAM_FILTERS.has(session.streamFilter)) {
+      session.streamFilter = "smart-mix";
     }
+
+    const options = [
+      { value: "smart-mix", text: `스마트 믹스 (${smartCount})` },
+      { value: "new-only", text: `신규 단어 집중 (${newCount})` },
+      { value: "review-only", text: `복습(레벨 1~2) 집중 (${reviewCount})` },
+      { value: "bookmarked", text: `북마크 단어 (${bookmarkedCount})` },
+    ];
 
     const fragment = document.createDocumentFragment();
-
-    const addOption = (value, text) => {
+    for (const item of options) {
       const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = text;
+      opt.value = item.value;
+      opt.textContent = item.text;
       fragment.appendChild(opt);
-    };
-
-    addOption("smart-mix", "오늘의 누적 복습 (스마트 믹스)");
-    addOption("all", `전체 Day (${deckWords.length})`);
-    for (const day of sortedDays) {
-      addOption(String(day), `Day ${day} (${dayCounts.get(day)})`);
     }
-    addOption("bookmarked", `북마크 단어 (${bookmarkedCount})`);
 
-    dom.dayFilter.innerHTML = "";
-    dom.dayFilter.appendChild(fragment);
-    dom.dayFilter.value = session.dayFilter;
+    dom.streamFilter.innerHTML = "";
+    dom.streamFilter.appendChild(fragment);
+    dom.streamFilter.value = session.streamFilter;
+  }
+
+  function triggerPaceBump() {
+    if (session.paceBumpTimer) {
+      clearTimeout(session.paceBumpTimer);
+    }
+    const targets = [dom.paceChip, dom.mobileStatusPill].filter(Boolean);
+    for (const el of targets) {
+      el.classList.remove("is-bumping");
+      void el.offsetWidth;
+      el.classList.add("is-bumping");
+    }
+    session.paceBumpTimer = setTimeout(() => {
+      for (const el of targets) {
+        el.classList.remove("is-bumping");
+      }
+      session.paceBumpTimer = null;
+    }, 340);
   }
 
   function renderMobileHeaderStatus() {
     if (!dom.mobileStatusPill || !dom.mobileProgressText) return;
 
+    const todayPassed = getTodayCountForDeck(session.activeDeck);
     const isDeckFiltered = session.activeDeck !== "all";
-    const isDayFiltered = session.dayFilter !== "smart-mix";
-    const isFiltered = isDeckFiltered || isDayFiltered;
+    const isModeFiltered = session.streamFilter !== "smart-mix";
+    const isFiltered = isDeckFiltered || isModeFiltered;
+
     dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
+    dom.mobileStatusPill.classList.toggle(
+      "has-pace",
+      session.activeTab !== "wrong-archive" && todayPassed > 0,
+    );
 
     if (dom.mobileFilterTag) {
       const parts = [];
       if (isDeckFiltered) {
         parts.push(getActiveDeckTitle());
       }
-      if (session.dayFilter === "bookmarked") {
+      if (session.streamFilter === "new-only") {
+        parts.push("신규");
+      } else if (session.streamFilter === "review-only") {
+        parts.push("복습");
+      } else if (session.streamFilter === "bookmarked") {
         parts.push("★ 북마크");
-      } else if (session.dayFilter === "all") {
-        parts.push("전체");
-      } else if (isDayFiltered) {
-        parts.push(`Day ${session.dayFilter}`);
       }
 
       if (parts.length > 0) {
@@ -1091,14 +1224,10 @@
     }
 
     if (session.activeTab === "wrong-archive") {
-      const count = getFilteredPool("wrong-archive").length;
+      const count = getArchiveFilteredWords().length;
       dom.mobileProgressText.textContent = `오답 ${count}단어`;
-    } else if (session.completed) {
-      dom.mobileProgressText.textContent = "세션 완료";
-    } else if (session.queue.length === 0) {
-      dom.mobileProgressText.textContent = "0장";
     } else {
-      dom.mobileProgressText.textContent = `남은 ${session.queue.length}장`;
+      dom.mobileProgressText.textContent = `오늘 +${todayPassed}`;
     }
   }
 
@@ -1122,10 +1251,13 @@
 
     const masteryPercent =
       totalWords > 0 ? Math.round((masteredCount / totalWords) * 100) : 0;
+    const todayPassed = getTodayCountForDeck(session.activeDeck);
 
-    dom.statTodayCount.textContent = String(
-      getTodayCountForDeck(session.activeDeck),
-    );
+    dom.statTodayCount.textContent = `+${todayPassed}`;
+    if (dom.paceChip) {
+      dom.paceChip.textContent = `오늘 +${todayPassed}`;
+      dom.paceChip.classList.toggle("has-pace", todayPassed > 0);
+    }
     if (dom.statMasteryLabel) {
       dom.statMasteryLabel.textContent =
         session.activeDeck === "all"
@@ -1148,6 +1280,9 @@
     };
     updateBadge(dom.tabWrongStudyCount, wrongFocusCount);
     updateBadge(dom.tabArchiveCount, wrongArchiveCount);
+
+    renderStreamFilterOptions();
+    renderMobileHeaderStatus();
   }
 
   function updateSegmentedIndicator() {
@@ -1220,12 +1355,9 @@
     const { animateEnter = false } = options;
 
     const isWrongMode = session.activeTab === "wrong-study";
-    const isSmartMix = !isWrongMode && session.dayFilter === "smart-mix";
     const modeLabel = isWrongMode
       ? "오답 집중 공략"
-      : isSmartMix
-        ? "스마트 믹스"
-        : "전체 학습";
+      : getStreamFilterLabel(session.streamFilter);
     dom.deckModeBadge.textContent =
       session.activeDeck === "all"
         ? modeLabel
@@ -1234,6 +1366,7 @@
 
     const word = getCurrentWord();
     const hasWords = Boolean(word);
+    const totalEligible = getTotalEligibleCount();
 
     dom.flashcardStage.hidden = !hasWords;
     dom.controlBar.hidden = !hasWords;
@@ -1241,67 +1374,87 @@
     dom.shuffleBtn.disabled = session.queue.length <= 1;
 
     if (!hasWords) {
-      if (session.completed) {
+      const deckWords = getActiveDeckWords();
+      const deckName =
+        session.activeDeck === "all"
+          ? "전체 단어장"
+          : `${getActiveDeckTitle()} 단어장`;
+
+      dom.cardProgressText.textContent = "남은 단어 없음";
+
+      if (
+        !isWrongMode &&
+        session.streamFilter === "smart-mix" &&
+        deckWords.length > 0
+      ) {
         dom.studyEmptyState.classList.add("is-complete");
-        dom.cardProgressText.textContent = "세션 완료";
+        dom.studyEmptyTitle.textContent = `${deckName} 마스터 완료!`;
+        dom.studyEmptyDesc.textContent = `모든 단어가 Lv.3 마스터에 도달했습니다. 원할 때 마스터 단어를 가볍게 복습하거나 다른 단어장으로 이동해 보세요.`;
         if (dom.restartSessionBtn) {
           dom.restartSessionBtn.hidden = false;
+          dom.restartSessionBtn.textContent = "마스터 단어 가볍게 복습";
         }
-
-        if (isWrongMode) {
-          dom.studyEmptyTitle.textContent = "오답 집중 공략 완료!";
-          dom.studyEmptyDesc.textContent = `총 ${session.passedCount}개 오답 단어를 모두 통과했습니다. 3회 연속 통과 시 마스터(Lv.3)가 됩니다.`;
+        if (session.activeDeck !== "all") {
           dom.returnToAllBtn.hidden = false;
           dom.returnToAllBtn.className = "secondary-pill-btn";
-          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+          dom.returnToAllBtn.textContent = "전체 단어장 보기";
         } else {
-          dom.studyEmptyTitle.textContent = "세션 완료!";
-          dom.studyEmptyDesc.textContent = `총 ${session.passedCount}개 단어를 모두 통과했습니다. 서로 다른 세션에서 3회 연속 통과하면 마스터(Lv.3)가 됩니다.`;
-          if (session.dayFilter === "smart-mix") {
-            dom.returnToAllBtn.hidden = true;
-          } else {
-            dom.returnToAllBtn.hidden = false;
-            dom.returnToAllBtn.className = "secondary-pill-btn";
-            dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
-          }
+          dom.returnToAllBtn.hidden = true;
         }
-      } else {
-        dom.studyEmptyState.classList.remove("is-complete");
-        dom.cardProgressText.textContent = "0장";
+      } else if (isWrongMode) {
+        dom.studyEmptyState.classList.add("is-complete");
+        dom.studyEmptyTitle.textContent = "공략할 오답 단어가 없습니다";
+        dom.studyEmptyDesc.textContent =
+          "현재 단어장에 미마스터(Lv.3 미만) 오답 단어가 없습니다. 스마트 믹스 스트림에서 학습을 이어가 보세요.";
         if (dom.restartSessionBtn) {
           dom.restartSessionBtn.hidden = true;
         }
         dom.returnToAllBtn.hidden = false;
         dom.returnToAllBtn.className = "primary-pill-btn";
-
-        if (isWrongMode) {
-          dom.studyEmptyTitle.textContent = "공략할 오답 단어가 없습니다";
-          dom.studyEmptyDesc.textContent =
-            session.dayFilter === "smart-mix" || session.dayFilter === "all"
-              ? "오답노트에 남아 있는 미마스터(Lv.3 미만) 단어가 없습니다. 스마트 믹스에서 새 단어를 학습해 보세요."
-              : "선택한 필터 조건에 해당하는 미마스터 오답 단어가 없습니다. 필터를 변경하거나 스마트 믹스로 이동해 보세요.";
-          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
-        } else if (session.dayFilter === "bookmarked") {
-          dom.studyEmptyTitle.textContent = "북마크한 단어가 없습니다";
-          dom.studyEmptyDesc.textContent =
-            "학습 중 카드 우측 상단의 별표(B)를 눌러 중요 단어를 북마크해 보세요.";
-          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
-        } else if (
-          session.dayFilter === "smart-mix" &&
-          getActiveDeckWords().length > 0
-        ) {
-          dom.studyEmptyTitle.textContent = "모든 단어를 마스터했습니다!";
-          dom.studyEmptyDesc.textContent =
-            session.activeDeck === "all"
-              ? "전체 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요."
-              : `${getActiveDeckTitle()} 단어장의 모든 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요.`;
-          dom.returnToAllBtn.textContent = "전체 Day로 복습하기";
-        } else {
-          dom.studyEmptyTitle.textContent = "학습할 단어가 없습니다";
-          dom.studyEmptyDesc.textContent =
-            "다른 Day 필터를 선택해 학습을 이어가 보세요.";
-          dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+        dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
+      } else if (session.streamFilter === "new-only") {
+        dom.studyEmptyState.classList.add("is-complete");
+        dom.studyEmptyTitle.textContent = "신규 단어를 모두 학습했습니다!";
+        dom.studyEmptyDesc.textContent = `${deckName}의 모든 신규 단어를 한 번 이상 확인했습니다. 스마트 믹스나 복습 집중 모드로 Lv.3 마스터를 완성해 보세요.`;
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
         }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+        dom.returnToAllBtn.textContent = "스마트 믹스로 전환";
+      } else if (session.streamFilter === "review-only") {
+        dom.studyEmptyState.classList.remove("is-complete");
+        dom.studyEmptyTitle.textContent = "복습할 레벨 1~2 단어가 없습니다";
+        dom.studyEmptyDesc.textContent =
+          "스마트 믹스나 신규 단어 집중 모드에서 단어를 통과시키면 레벨 1~2 복습 스트림에 자동으로 모입니다.";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
+        }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+        dom.returnToAllBtn.textContent = "스마트 믹스로 전환";
+      } else if (session.streamFilter === "bookmarked") {
+        dom.studyEmptyState.classList.remove("is-complete");
+        dom.studyEmptyTitle.textContent = "북마크한 단어가 없습니다";
+        dom.studyEmptyDesc.textContent =
+          "학습 중 카드 우측 상단의 별표(B)를 눌러 중요 단어를 북마크해 보세요.";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
+        }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+        dom.returnToAllBtn.textContent = "스마트 믹스로 전환";
+      } else {
+        dom.studyEmptyState.classList.remove("is-complete");
+        dom.studyEmptyTitle.textContent = "학습할 단어가 없습니다";
+        dom.studyEmptyDesc.textContent =
+          "다른 단어장이나 학습 스트림 모드를 선택해 보세요.";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
+        }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+        dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
       }
 
       renderMobileHeaderStatus();
@@ -1315,13 +1468,15 @@
 
     const progress = getWordProgress(word.id);
 
-    dom.cardProgressText.textContent = `남은 ${session.queue.length}장 · 통과 ${session.passedCount}/${session.initialTotal}`;
+    dom.cardProgressText.textContent =
+      totalEligible > 0
+        ? `남은 후보 ${totalEligible}단어`
+        : `자유 복습 ${session.queue.length}장`;
 
     // Front face
     if (dom.cardDeckBadge) {
       dom.cardDeckBadge.textContent = word.deckTitle;
     }
-    dom.cardDayBadge.textContent = `Day ${word.day}`;
     dom.cardPos.textContent = word.pos;
     dom.cardWord.textContent = word.word;
     dom.cardPhonetic.textContent = word.phonetic;
@@ -1358,7 +1513,7 @@
   }
 
   function renderArchive() {
-    const wrongWords = getFilteredPool("wrong-archive").sort((a, b) => {
+    const wrongWords = getArchiveFilteredWords().sort((a, b) => {
       const pa = getWordProgress(a.id);
       const pb = getWordProgress(b.id);
       if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
@@ -1370,11 +1525,7 @@
     const deckPrefix =
       session.activeDeck === "all" ? "" : `${getActiveDeckTitle()} · `;
     const filterNote =
-      session.dayFilter === "smart-mix" || session.dayFilter === "all"
-        ? ""
-        : session.dayFilter === "bookmarked"
-          ? " (북마크 필터)"
-          : ` (Day ${session.dayFilter})`;
+      session.streamFilter === "bookmarked" ? " (북마크 필터)" : "";
 
     dom.archiveSummaryText.textContent = `${deckPrefix}오답 횟수 높은 순 · 총 ${wrongWords.length}단어${filterNote}`;
     dom.hideMeaningToggle.checked = persistedState.hideMeanings;
@@ -1426,11 +1577,7 @@
       deckSpan.className = "archive-deck";
       deckSpan.textContent = word.deckTitle;
 
-      const daySpan = document.createElement("span");
-      daySpan.className = "archive-day";
-      daySpan.textContent = `Day ${word.day}`;
-
-      topDiv.append(wordSpan, phoneticSpan, posSpan, deckSpan, daySpan);
+      topDiv.append(wordSpan, phoneticSpan, posSpan, deckSpan);
 
       const meaningWrap = document.createElement("div");
       meaningWrap.className = "archive-meaning-wrap";
@@ -1540,13 +1687,6 @@
     const progress = getWordProgress(word.id);
     progress.lastStudied = Date.now();
 
-    ensureTodayStats();
-    persistedState.todayStats.count += 1;
-    if (word.deckKey) {
-      persistedState.todayStats.byDeck[word.deckKey] =
-        (persistedState.todayStats.byDeck[word.deckKey] || 0) + 1;
-    }
-
     let toastMsg = "";
     let toastVariant = "default";
 
@@ -1558,15 +1698,23 @@
       toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · 5장 뒤 재출제`;
       toastVariant = "error";
     } else if (rating === 2) {
-      // 2: 애매함 -> level 0 초기화, wrongCount + 1, 큐 맨 뒤로 이동
+      // 2: 애매함 -> level 0 초기화, wrongCount + 1, 15~20장 뒤로 자연스럽게 이동
       progress.level = 0;
       progress.wrongCount += 1;
       progress.status = "hard";
-      toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 큐 맨 뒤로 이동`;
+      toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 15~20장 뒤 재출제`;
     } else if (rating === 3) {
-      // 3: 알겠음 -> level +1 (최대 3), 현재 세션 큐에서 즉시 소거
+      // 3: 알겠음 -> level +1 (최대 3), 오늘 통과 페이스 +1, 현재 스트림에서 소거
       progress.level = Math.min(MAX_LEVEL, progress.level + 1);
       progress.status = progress.level >= MAX_LEVEL ? "master" : "good";
+
+      ensureTodayStats();
+      persistedState.todayStats.count += 1;
+      if (word.deckKey) {
+        persistedState.todayStats.byDeck[word.deckKey] =
+          (persistedState.todayStats.byDeck[word.deckKey] || 0) + 1;
+      }
+
       if (progress.level >= MAX_LEVEL) {
         toastMsg = `"${word.word}" 마스터 달성! (Lv.3)`;
         toastVariant = "success";
@@ -1577,6 +1725,9 @@
 
     savePersistedState();
     renderStats();
+    if (rating === 3) {
+      triggerPaceBump();
+    }
     if (toastMsg) {
       showToast(toastMsg, toastVariant);
     }
@@ -1600,7 +1751,12 @@
 
       if (ratedId !== undefined) {
         if (rating === 1) {
-          const insertIdx = Math.min(idx + 5, session.queue.length);
+          // 다음 배치가 필요하면 먼저 보충한 뒤 5장 뒤에 재삽입
+          refillStreamIfNeeded(ratedId, true);
+          const insertIdx = Math.min(
+            idx + WRONG_REINSERT_OFFSET,
+            session.queue.length,
+          );
           session.queue.splice(insertIdx, 0, ratedId);
           if (session.queue.length > 1 && session.queue[idx] === ratedId) {
             session.currentIndex = 0;
@@ -1608,20 +1764,29 @@
             session.currentIndex = idx >= session.queue.length ? 0 : idx;
           }
         } else if (rating === 2) {
-          session.queue.push(ratedId);
-          if (session.queue.length > 1 && idx >= session.queue.length - 1) {
-            session.currentIndex = 0;
-          } else {
-            session.currentIndex = idx;
-          }
-        } else if (rating === 3) {
-          session.passedCount += 1;
-          if (session.queue.length === 0) {
-            session.completed = true;
+          // 다음 배치가 필요하면 먼저 보충한 뒤 15~20장 뒤에 자연스럽게 재삽입
+          refillStreamIfNeeded(ratedId, true);
+          const hardOffset =
+            HARD_REINSERT_MIN +
+            Math.floor(
+              Math.random() * (HARD_REINSERT_MAX - HARD_REINSERT_MIN + 1),
+            );
+          const insertIdx = Math.min(idx + hardOffset, session.queue.length);
+          session.queue.splice(insertIdx, 0, ratedId);
+          if (session.queue.length > 1 && session.queue[idx] === ratedId) {
             session.currentIndex = 0;
           } else {
             session.currentIndex = idx >= session.queue.length ? 0 : idx;
           }
+        } else if (rating === 3) {
+          // 남은 카드 5장 이하일 때 다음 20단어 배치 자동 보충 (무한 스마트 스트림)
+          refillStreamIfNeeded(ratedId, false);
+          session.currentIndex =
+            session.queue.length === 0
+              ? 0
+              : idx >= session.queue.length
+                ? 0
+                : idx;
         }
       }
 
@@ -1649,12 +1814,12 @@
     const progress = getWordProgress(word.id);
     progress.bookmarked = !progress.bookmarked;
     savePersistedState();
-    renderDayFilterOptions();
+    renderStreamFilterOptions();
 
-    // If user unbookmarks while inside the bookmarked-only filter, refresh queue
-    if (session.dayFilter === "bookmarked" && !progress.bookmarked) {
+    // If user unbookmarks while inside the bookmarked-only stream, refresh queue
+    if (session.streamFilter === "bookmarked" && !progress.bookmarked) {
       session.queue = session.queue.filter((id) => id !== word.id);
-      session.initialTotal = Math.max(0, session.initialTotal - 1);
+      refillStreamIfNeeded(word.id, true);
       if (session.queue.length === 0) {
         session.currentIndex = 0;
       } else if (session.currentIndex >= session.queue.length) {
@@ -1739,7 +1904,7 @@
     savePersistedState();
 
     renderDeckSelector();
-    renderDayFilterOptions();
+    renderStreamFilterOptions();
     clearSwipeClasses();
     resetCardFlipInstant();
 
@@ -1775,8 +1940,10 @@
     renderAll({ animateEnter: nextTab !== "wrong-archive" });
   }
 
-  function handleDayFilterChange(nextFilter) {
-    session.dayFilter = nextFilter;
+  function handleStreamFilterChange(nextFilter) {
+    session.streamFilter = VALID_STREAM_FILTERS.has(nextFilter)
+      ? nextFilter
+      : "smart-mix";
     clearSwipeClasses();
     resetCardFlipInstant();
 
@@ -1893,7 +2060,7 @@
         applyTheme(persistedState.theme);
         savePersistedState();
         renderDeckSelector();
-        renderDayFilterOptions();
+        renderStreamFilterOptions();
         buildSessionQueue();
         renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
         closeMobileMenu();
@@ -2223,35 +2390,31 @@
       mobileMediaQuery.addListener(handleMediaChange);
     }
 
-    // Segmented tabs & Day filter
+    // Segmented tabs & Stream filter
     dom.tabButtons.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
-    dom.dayFilter.addEventListener("change", (e) =>
-      handleDayFilterChange(e.target.value),
+    dom.streamFilter.addEventListener("change", (e) =>
+      handleStreamFilterChange(e.target.value),
     );
 
     // Deck controls
     dom.shuffleBtn.addEventListener("click", shuffleCurrentSession);
     if (dom.restartSessionBtn) {
-      dom.restartSessionBtn.addEventListener("click", () => {
-        buildSessionQueue();
-        renderAll({ animateEnter: true });
-      });
+      dom.restartSessionBtn.addEventListener("click", startMasteredFreeReview);
     }
     dom.returnToAllBtn.addEventListener("click", () => {
       if (
         session.activeTab === "all" &&
-        session.dayFilter === "smart-mix" &&
-        !session.completed
+        session.streamFilter === "smart-mix" &&
+        session.activeDeck !== "all"
       ) {
-        session.dayFilter = "all";
-        dom.dayFilter.value = "all";
-      } else {
-        session.dayFilter = "smart-mix";
-        dom.dayFilter.value = "smart-mix";
-        session.activeTab = "all";
+        switchDeck("all");
+        return;
       }
+      session.streamFilter = "smart-mix";
+      session.activeTab = "all";
+      renderStreamFilterOptions();
       buildSessionQueue();
       renderAll({ animateEnter: true });
     });
@@ -2353,7 +2516,7 @@
     applyTheme(persistedState.theme);
     syncShortcutHintBar();
     renderDeckSelector();
-    renderDayFilterOptions();
+    renderStreamFilterOptions();
     syncResponsiveMenuPlacement(mobileMediaQuery.matches);
     dom.hideMeaningToggle.checked = persistedState.hideMeanings;
 

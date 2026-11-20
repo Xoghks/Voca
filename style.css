@@ -517,7 +517,7 @@ kbd {
 }
 
 /* ==========================================================================
-   3. iOS Segmented Control + Day Filter
+   3. iOS Segmented Control + Stream Filter
    ========================================================================== */
 
 .navigation-bar {
@@ -600,7 +600,7 @@ kbd {
 .filter-wrapper {
   position: relative;
   flex-shrink: 0;
-  min-width: 144px;
+  min-width: 204px;
 }
 
 .ios-select {
@@ -674,6 +674,43 @@ kbd {
 .meta-pill.is-wrong-mode {
   color: var(--accent-red);
   background: var(--accent-red-soft);
+}
+
+@keyframes paceBump {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.09);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pace-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.pace-pill.has-pace {
+  color: var(--accent-green);
+  background: var(--accent-green-soft);
+}
+
+.pace-pill.is-bumping {
+  animation: paceBump 0.32s var(--ease-apple);
 }
 
 .meta-counter {
@@ -950,19 +987,6 @@ kbd {
   color: var(--text-primary);
   background: var(--bg-surface);
   border: 1px solid var(--border-medium);
-}
-
-.day-pill {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 11px;
-  border-radius: var(--radius-pill);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text-secondary);
-  background: var(--bg-subtle);
 }
 
 .pos-pill {
@@ -1504,15 +1528,6 @@ kbd {
   border-radius: var(--radius-pill);
 }
 
-.archive-day {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  background: var(--bg-subtle);
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-}
-
 .archive-meaning-wrap {
   display: flex;
   flex-direction: column;
@@ -1858,10 +1873,20 @@ kbd {
     white-space: nowrap;
   }
 
+  .mobile-status-pill.has-pace:not(.has-filter) {
+    background: var(--accent-green-soft);
+    border-color: rgba(52, 199, 89, 0.22);
+    color: var(--accent-green);
+  }
+
   .mobile-status-pill.has-filter {
     background: var(--accent-blue-soft);
     border-color: rgba(0, 122, 255, 0.2);
     color: var(--accent-blue);
+  }
+
+  .mobile-status-pill.is-bumping {
+    animation: paceBump 0.32s var(--ease-apple);
   }
 
   .mobile-filter-tag {
