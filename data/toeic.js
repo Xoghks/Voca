@@ -4,13 +4,14 @@
       아래 key(영문 고유 키), title(화면에 표시될 이름), words 배열을 수정합니다.
       ※ 각 단어장 내부의 id 는 다른 단어장과 겹쳐도 괜찮으므로 1, 2, 3... 으로
         편하게 작성하세요. app.js 가 `${key}_${id}` 로 고유 키를 자동 생성합니다.
+      ※ 고정된 Day 구분 없이 원하는 만큼 단어를 자유롭게 넣으면
+        무한 스마트 스트림이 숙련도(Lv.0~3)에 따라 자동으로 공급합니다.
    2. index.html 하단의 [단어장 데이터 플러그인] 영역에 <script> 한 줄만 추가합니다.
       예) <script src="./data/gre.js" defer></script>
-      → app.js 코드를 수정하지 않아도 메뉴·통계·Day 필터·오답노트에 자동 반영됩니다.
+      → app.js 코드를 수정하지 않아도 메뉴·통계·학습 스트림·오답노트에 자동 반영됩니다.
 
    [단어 객체 스키마]
    - id: 숫자 (단어장 내부에서 1부터 순차 번호)
-   - day: 숫자 (1, 2, 3... Day 드롭다운이 자동으로 생성됨)
    - word: 영단어
    - phonetic: 발음기호 (IPA)
    - pos: 품사 (n., v., adj., adv. 등)
@@ -25,10 +26,8 @@ window.VOCAB_DECKS.push({
   key: "toeic",
   title: "토익",
   words: [
-    // Day 1 (1 ~ 5)
     {
       id: 1,
-      day: 1,
       word: "reimburse",
       phonetic: "/ˌriː.ɪmˈbɜːrs/",
       pos: "v.",
@@ -40,7 +39,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 2,
-      day: 1,
       word: "mandatory",
       phonetic: "/ˈmæn.də.tɔːr.i/",
       pos: "adj.",
@@ -52,7 +50,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 3,
-      day: 1,
       word: "streamline",
       phonetic: "/ˈstriːm.laɪn/",
       pos: "v.",
@@ -64,7 +61,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 4,
-      day: 1,
       word: "contingency",
       phonetic: "/kənˈtɪn.dʒən.si/",
       pos: "n.",
@@ -76,7 +72,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 5,
-      day: 1,
       word: "complimentary",
       phonetic: "/ˌkɑːm.pləˈmen.tər.i/",
       pos: "adj.",
@@ -86,11 +81,8 @@ window.VOCAB_DECKS.push({
       exampleKo:
         "컨퍼런스 참가자들은 컨벤션 센터에서 무료 주차 혜택을 받는다.",
     },
-
-    // Day 2 (6 ~ 10)
     {
       id: 6,
-      day: 2,
       word: "stipulate",
       phonetic: "/ˈstɪp.jə.leɪt/",
       pos: "v.",
@@ -102,7 +94,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 7,
-      day: 2,
       word: "lucrative",
       phonetic: "/ˈluː.krə.tɪv/",
       pos: "adj.",
@@ -114,7 +105,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 8,
-      day: 2,
       word: "disseminate",
       phonetic: "/dɪˈsem.ə.neɪt/",
       pos: "v.",
@@ -126,7 +116,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 9,
-      day: 2,
       word: "tentative",
       phonetic: "/ˈten.tə.tɪv/",
       pos: "adj.",
@@ -138,7 +127,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 10,
-      day: 2,
       word: "benchmark",
       phonetic: "/ˈbentʃ.mɑːrk/",
       pos: "n.",

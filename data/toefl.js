@@ -9,10 +9,8 @@ window.VOCAB_DECKS.push({
   key: "toefl",
   title: "토플",
   words: [
-    // Day 1 (1 ~ 5)
     {
       id: 1,
-      day: 1,
       word: "ubiquitous",
       phonetic: "/juːˈbɪk.wɪ.təs/",
       pos: "adj.",
@@ -24,7 +22,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 2,
-      day: 1,
       word: "corroborate",
       phonetic: "/kəˈrɑː.bə.reɪt/",
       pos: "v.",
@@ -36,7 +33,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 3,
-      day: 1,
       word: "ephemeral",
       phonetic: "/ɪˈfem.ər.əl/",
       pos: "adj.",
@@ -48,7 +44,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 4,
-      day: 1,
       word: "exacerbate",
       phonetic: "/ɪɡˈzæs.ər.beɪt/",
       pos: "v.",
@@ -60,7 +55,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 5,
-      day: 1,
       word: "empirical",
       phonetic: "/ɪmˈpɪr.ɪ.kəl/",
       pos: "adj.",
@@ -70,11 +64,8 @@ window.VOCAB_DECKS.push({
       exampleKo:
         "그들의 모델은 여전히 통제된 현장 실험을 통한 실증적 검증이 필요하다.",
     },
-
-    // Day 2 (6 ~ 10)
     {
       id: 6,
-      day: 2,
       word: "proliferate",
       phonetic: "/prəˈlɪf.ər.eɪt/",
       pos: "v.",
@@ -86,7 +77,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 7,
-      day: 2,
       word: "supersede",
       phonetic: "/ˌsuː.pərˈsiːd/",
       pos: "v.",
@@ -98,7 +88,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 8,
-      day: 2,
       word: "substantiate",
       phonetic: "/səbˈstæn.ʃi.eɪt/",
       pos: "v.",
@@ -110,7 +99,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 9,
-      day: 2,
       word: "reconcile",
       phonetic: "/ˈrek.ən.saɪl/",
       pos: "v.",
@@ -122,7 +110,6 @@ window.VOCAB_DECKS.push({
     },
     {
       id: 10,
-      day: 2,
       word: "paradigm",
       phonetic: "/ˈpær.ə.daɪm/",
       pos: "n.",
