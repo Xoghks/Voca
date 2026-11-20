@@ -1,4 +1,14 @@
 <!doctype html>
+<!--
+  ==========================================================================
+  [새 단어장 추가 가이드 — 2단계]
+  1. data/toeic.js 파일을 복사해 data/새파일.js (예: data/gre.js) 를 만들고,
+     key / title / words 내용을 수정합니다. (id 는 1, 2, 3... 부터 자유롭게 작성)
+  2. 이 파일 맨 아래 [단어장 데이터 플러그인] 영역에 <script> 한 줄만 추가합니다.
+     예) <script src="./data/gre.js" defer></script>
+     → app.js 수정 없이 단어장 메뉴·통계·Day 필터·스마트 믹스·오답노트에 자동 연동됩니다.
+  ==========================================================================
+-->
 <html lang="ko" data-theme="light">
   <head>
     <meta charset="UTF-8" />
@@ -9,13 +19,13 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f5f5f7" />
     <title>Lexicon — 영단어 암기</title>
-    <link rel="stylesheet" href="style.css?v=3" />
+    <link rel="stylesheet" href="style.css?v=4" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=3");
+        navigator.serviceWorker.register("./sw.js?v=4");
       }
     </script>
     <!-- 1. 상단 글래스모피즘 헤더 -->
@@ -46,6 +56,13 @@
             <span class="app-subtitle">Bridge Vocabulary</span>
           </div>
         </div>
+
+        <!-- 동적 단어장(Deck) 선택 UI (app.js 가 window.VOCAB_DECKS 로 자동 렌더링) -->
+        <nav
+          id="deckSelector"
+          class="deck-selector"
+          aria-label="단어장 선택"
+        ></nav>
 
         <div class="header-actions" id="headerActions">
           <button
@@ -274,6 +291,11 @@
 
       <div class="mobile-menu-body">
         <div class="menu-section">
+          <span class="menu-section-label">단어장 선택</span>
+          <div id="menuSlotDecks" class="menu-slot"></div>
+        </div>
+
+        <div class="menu-section">
           <span class="menu-section-label">실시간 통계</span>
           <div id="menuSlotStats" class="menu-slot"></div>
         </div>
@@ -311,9 +333,9 @@
 
         <div class="stat-card stat-card-progress">
           <div class="stat-progress-header">
-            <span class="stat-label">전체 마스터</span>
+            <span id="statMasteryLabel" class="stat-label">전체 마스터</span>
             <strong id="statMasteryText" class="stat-progress-percent"
-              >0% (0/30)</strong
+              >0% (0/20)</strong
             >
           </div>
           <div
@@ -470,6 +492,7 @@
                 <div class="card-top-bar">
                   <div class="card-top-left">
                     <div class="card-tags">
+                      <span id="cardDeckBadge" class="deck-pill">토익</span>
                       <span id="cardDayBadge" class="day-pill">Day 1</span>
                       <span id="cardPos" class="pos-pill">adj.</span>
                     </div>
@@ -808,7 +831,17 @@
       aria-atomic="true"
     ></div>
 
-    <script src="words.js?v=3" defer></script>
-    <script src="app.js?v=3" defer></script>
+    <!--
+      ========================================================================
+      [단어장 데이터 플러그인]
+      새 단어장을 추가하려면 data/toeic.js 를 복사해 data/새파일.js 를 만든 뒤
+      아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
+      ========================================================================
+    -->
+    <script src="./data/toeic.js?v=4" defer></script>
+    <script src="./data/toefl.js?v=4" defer></script>
+
+    <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
+    <script src="app.js?v=4" defer></script>
   </body>
 </html>

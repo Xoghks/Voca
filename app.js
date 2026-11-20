@@ -15,13 +15,98 @@
     "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
   const mobileMediaQuery = window.matchMedia(MOBILE_LAYOUT_QUERY);
 
-  const WORDS = Array.isArray(window.VOCAB_DATA)
-    ? window.VOCAB_DATA
-    : typeof VOCAB_DATA !== "undefined" && Array.isArray(VOCAB_DATA)
-      ? VOCAB_DATA
+  // Dynamic Plugin Registry State (populated by loadDeckRegistry() at init)
+  let DECKS = [];
+  let DECK_MAP = new Map();
+  let WORDS = [];
+  let WORD_MAP = new Map();
+
+  function loadDeckRegistry() {
+    const rawDecks = Array.isArray(window.VOCAB_DECKS)
+      ? [...window.VOCAB_DECKS]
       : [];
 
-  const WORD_MAP = new Map(WORDS.map((item) => [item.id, item]));
+    // Emergency fallback if only legacy window.VOCAB_DATA is present
+    if (
+      rawDecks.length === 0 &&
+      Array.isArray(window.VOCAB_DATA) &&
+      window.VOCAB_DATA.length > 0
+    ) {
+      rawDecks.push({
+        key: "default",
+        title: "기본",
+        words: window.VOCAB_DATA,
+      });
+    }
+
+    const nextDecks = [];
+    const nextDeckMap = new Map();
+    const nextWords = [];
+    const nextWordMap = new Map();
+    const seenDeckKeys = new Set();
+    let orderSeq = 0;
+
+    for (const rawDeck of rawDecks) {
+      if (!rawDeck || typeof rawDeck !== "object") continue;
+      const key = String(rawDeck.key || "").trim();
+      const title = String(rawDeck.title || key).trim();
+      if (!key || seenDeckKeys.has(key) || !Array.isArray(rawDeck.words)) {
+        continue;
+      }
+      seenDeckKeys.add(key);
+
+      const deckWords = [];
+      for (const rawWord of rawDeck.words) {
+        if (!rawWord || typeof rawWord !== "object") continue;
+        const localId = rawWord.id;
+        if (localId === undefined || localId === null) continue;
+
+        const uid = `${key}_${localId}`;
+        if (nextWordMap.has(uid)) continue;
+
+        const parsedDay = Number(rawWord.day);
+        const normalizedWord = {
+          uid,
+          id: uid,
+          localId,
+          deckKey: key,
+          deckTitle: title,
+          orderIndex: orderSeq,
+          day:
+            Number.isFinite(parsedDay) && parsedDay >= 1
+              ? Math.floor(parsedDay)
+              : 1,
+          word: String(rawWord.word || ""),
+          phonetic: String(rawWord.phonetic || ""),
+          pos: String(rawWord.pos || ""),
+          meaning: String(rawWord.meaning || ""),
+          example: String(rawWord.example || ""),
+          exampleKo: String(rawWord.exampleKo || ""),
+        };
+
+        orderSeq += 1;
+        deckWords.push(normalizedWord);
+        nextWords.push(normalizedWord);
+        nextWordMap.set(uid, normalizedWord);
+      }
+
+      const deckEntry = {
+        key,
+        title,
+        words: deckWords,
+      };
+      nextDecks.push(deckEntry);
+      nextDeckMap.set(key, deckEntry);
+    }
+
+    DECKS = nextDecks;
+    DECK_MAP = nextDeckMap;
+    WORDS = nextWords;
+    WORD_MAP = nextWordMap;
+
+    // Expose integrated flat dataset globally
+    window.VOCAB_DATA = WORDS;
+  }
 
   /* ========================================================================
      2. DOM Element References
@@ -32,6 +117,7 @@
 
     // Header & Layout Containers
     headerInner: document.querySelector(".header-inner"),
+    deckSelector: document.getElementById("deckSelector"),
     headerActions: document.getElementById("headerActions"),
     exportBtn: document.getElementById("exportBtn"),
     importBtn: document.getElementById("importBtn"),
@@ -50,6 +136,7 @@
     mobileMenuBackdrop: document.getElementById("mobileMenuBackdrop"),
     mobileMenu: document.getElementById("mobileMenu"),
     mobileMenuCloseBtn: document.getElementById("mobileMenuCloseBtn"),
+    menuSlotDecks: document.getElementById("menuSlotDecks"),
     menuSlotStats: document.getElementById("menuSlotStats"),
     menuSlotStudyControls: document.getElementById("menuSlotStudyControls"),
     menuSlotAppActions: document.getElementById("menuSlotAppActions"),
@@ -58,6 +145,7 @@
     appContainer: document.querySelector(".app-container"),
     statsWidget: document.getElementById("statsWidget"),
     statTodayCount: document.getElementById("statTodayCount"),
+    statMasteryLabel: document.getElementById("statMasteryLabel"),
     statMasteryText: document.getElementById("statMasteryText"),
     statMasteryTrack: document.getElementById("statMasteryTrack"),
     statMasteryBar: document.getElementById("statMasteryBar"),
@@ -83,6 +171,7 @@
     flashcardInner: document.querySelector("#flashcard .flashcard-inner"),
 
     // Flashcard Front / Back
+    cardDeckBadge: document.getElementById("cardDeckBadge"),
     cardDayBadge: document.getElementById("cardDayBadge"),
     cardPos: document.getElementById("cardPos"),
     cardMasteryMeta: document.getElementById("cardMasteryMeta"),
@@ -154,15 +243,30 @@
 
   function createDefaultState() {
     return {
-      version: 2,
+      version: 3,
       theme: getSystemDefaultTheme(),
+      selectedDeck: "all",
       hideMeanings: false,
       todayStats: {
         date: getLocalDateKey(),
         count: 0,
+        byDeck: {},
       },
       words: {},
     };
+  }
+
+  function sanitizeTodayByDeck(rawByDeck) {
+    const clean = {};
+    if (!rawByDeck || typeof rawByDeck !== "object") return clean;
+    for (const [deckKey, rawVal] of Object.entries(rawByDeck)) {
+      if (!deckKey) continue;
+      const num = Number(rawVal);
+      if (Number.isFinite(num) && num > 0) {
+        clean[deckKey] = Math.floor(num);
+      }
+    }
+    return clean;
   }
 
   function sanitizeWordEntry(raw) {
@@ -220,26 +324,41 @@
       if (parsed.theme === "light" || parsed.theme === "dark") {
         state.theme = parsed.theme;
       }
+      if (
+        typeof parsed.selectedDeck === "string" &&
+        (parsed.selectedDeck === "all" || DECK_MAP.has(parsed.selectedDeck))
+      ) {
+        state.selectedDeck = parsed.selectedDeck;
+      }
       state.hideMeanings = Boolean(parsed.hideMeanings);
 
       const todayKey = getLocalDateKey();
       if (
         parsed.todayStats &&
         typeof parsed.todayStats === "object" &&
-        parsed.todayStats.date === todayKey &&
-        Number.isFinite(Number(parsed.todayStats.count))
+        parsed.todayStats.date === todayKey
       ) {
+        const safeCount = Number.isFinite(Number(parsed.todayStats.count))
+          ? Math.max(0, Math.floor(Number(parsed.todayStats.count)))
+          : 0;
+        const safeByDeck = sanitizeTodayByDeck(parsed.todayStats.byDeck);
+        const byDeckSum = Object.values(safeByDeck).reduce((a, b) => a + b, 0);
         state.todayStats = {
           date: todayKey,
-          count: Math.max(0, Math.floor(Number(parsed.todayStats.count))),
+          count: Math.max(safeCount, byDeckSum),
+          byDeck: safeByDeck,
         };
       }
 
-      if (parsed.words && typeof parsed.words === "object") {
-        for (const word of WORDS) {
-          const entry = parsed.words[String(word.id)] ?? parsed.words[word.id];
-          if (entry) {
-            state.words[word.id] = sanitizeWordEntry(entry);
+      // Safely retain all valid word records (including future/inactive decks & legacy entries)
+      if (
+        parsed.words &&
+        typeof parsed.words === "object" &&
+        !Array.isArray(parsed.words)
+      ) {
+        for (const [key, entry] of Object.entries(parsed.words)) {
+          if (key && entry && typeof entry === "object") {
+            state.words[key] = sanitizeWordEntry(entry);
           }
         }
       }
@@ -251,12 +370,13 @@
     }
   }
 
-  let persistedState = loadPersistedState();
+  let persistedState = createDefaultState();
 
   // Ephemeral UI / Session State
   const session = {
+    activeDeck: "all", // 'all' | deck.key ('toeic', 'toefl', ...)
     activeTab: "all", // 'all' | 'wrong-study' | 'wrong-archive'
-    dayFilter: "smart-mix", // 'smart-mix' | 'all' | '1' | '2' | '3' | 'bookmarked'
+    dayFilter: "smart-mix", // 'smart-mix' | 'all' | '1' | '2' | ... | 'bookmarked'
     queue: [],
     initialTotal: 0,
     passedCount: 0,
@@ -274,9 +394,30 @@
 
   function ensureTodayStats() {
     const todayKey = getLocalDateKey();
-    if (persistedState.todayStats.date !== todayKey) {
-      persistedState.todayStats = { date: todayKey, count: 0 };
+    if (
+      !persistedState.todayStats ||
+      persistedState.todayStats.date !== todayKey
+    ) {
+      persistedState.todayStats = { date: todayKey, count: 0, byDeck: {} };
     }
+    if (
+      !persistedState.todayStats.byDeck ||
+      typeof persistedState.todayStats.byDeck !== "object"
+    ) {
+      persistedState.todayStats.byDeck = {};
+    }
+  }
+
+  function getTodayCountForDeck(deckKey = session.activeDeck) {
+    ensureTodayStats();
+    if (deckKey === "all") {
+      const byDeckSum = Object.values(persistedState.todayStats.byDeck).reduce(
+        (sum, val) => sum + (Number.isFinite(Number(val)) ? Number(val) : 0),
+        0,
+      );
+      return Math.max(persistedState.todayStats.count || 0, byDeckSum);
+    }
+    return persistedState.todayStats.byDeck[deckKey] || 0;
   }
 
   function getWordProgress(wordId) {
@@ -487,6 +628,23 @@
     return dotsWrap;
   }
 
+  // 현재 선택된 단어장(Deck)의 단어 목록 반환
+  function getActiveDeckWords() {
+    if (session.activeDeck === "all") return WORDS;
+    const deck = DECK_MAP.get(session.activeDeck);
+    return deck ? deck.words : [];
+  }
+
+  function getActiveDeckTitle() {
+    if (session.activeDeck === "all") return "전체";
+    const deck = DECK_MAP.get(session.activeDeck);
+    return deck ? deck.title : session.activeDeck;
+  }
+
+  function compareWordsByOrder(a, b) {
+    return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
+  }
+
   // 오답 집중 공략 탭: wrongCount >= 1 이면서 아직 level < 3 인 단어
   function isWrongFocusTarget(wordId) {
     const progress = getWordProgress(wordId);
@@ -509,7 +667,8 @@
   }
 
   function getFilteredPool(tab = session.activeTab) {
-    return WORDS.filter((word) => {
+    const deckWords = getActiveDeckWords();
+    return deckWords.filter((word) => {
       if (!matchesDayFilter(word)) return false;
       if (tab === "wrong-study") {
         return isWrongFocusTarget(word.id);
@@ -521,38 +680,42 @@
     });
   }
 
-  function getAllWrongArchiveWords() {
-    return WORDS.filter((word) => isWrongArchiveTarget(word.id));
-  }
-
-  function getAllWrongFocusWords() {
-    return WORDS.filter((word) => isWrongFocusTarget(word.id));
+  function getActiveDeckWrongArchiveWords() {
+    return getActiveDeckWords().filter((word) => isWrongArchiveTarget(word.id));
   }
 
   function buildSmartMixPool() {
+    const deckWords = getActiveDeckWords();
+
     // Tier 1: 기존 학습 기록이 있거나 오답노트에 등록됐지만 아직 level < 3 인 단어
-    const reviewTier = WORDS.filter((word) => {
-      const p = getWordProgress(word.id);
-      return p.level < MAX_LEVEL && (p.wrongCount >= 1 || hasStudyHistory(p));
-    }).sort((a, b) => {
-      const pa = getWordProgress(a.id);
-      const pb = getWordProgress(b.id);
-      const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
-      const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
-      if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
-      if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
-      if (pa.level !== pb.level) return pa.level - pb.level;
-      const aTime = pa.lastStudied ?? 0;
-      const bTime = pb.lastStudied ?? 0;
-      if (aTime !== bTime) return aTime - bTime;
-      return a.id - b.id;
-    });
+    const reviewTier = deckWords
+      .filter((word) => {
+        const p = getWordProgress(word.id);
+        return p.level < MAX_LEVEL && (p.wrongCount >= 1 || hasStudyHistory(p));
+      })
+      .sort((a, b) => {
+        const pa = getWordProgress(a.id);
+        const pb = getWordProgress(b.id);
+        const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
+        const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
+        if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
+        if (pb.wrongCount !== pa.wrongCount) {
+          return pb.wrongCount - pa.wrongCount;
+        }
+        if (pa.level !== pb.level) return pa.level - pb.level;
+        const aTime = pa.lastStudied ?? 0;
+        const bTime = pb.lastStudied ?? 0;
+        if (aTime !== bTime) return aTime - bTime;
+        return compareWordsByOrder(a, b);
+      });
 
     // Tier 2: 아직 한 번도 안 본 신규 단어 (level === 0 & 미학습)
-    const newTier = WORDS.filter((word) => {
-      const p = getWordProgress(word.id);
-      return p.level === 0 && !hasStudyHistory(p);
-    }).sort((a, b) => a.id - b.id);
+    const newTier = deckWords
+      .filter((word) => {
+        const p = getWordProgress(word.id);
+        return p.level === 0 && !hasStudyHistory(p);
+      })
+      .sort(compareWordsByOrder);
 
     const selectedReview = reviewTier.slice(0, SMART_MIX_LIMIT);
     const remainingSlots = SMART_MIX_LIMIT - selectedReview.length;
@@ -607,7 +770,9 @@
           return pb.wrongCount - pa.wrongCount;
         }
         if (pa.level !== pb.level) return pa.level - pb.level;
-        return a - b;
+        const wa = WORD_MAP.get(a);
+        const wb = WORD_MAP.get(b);
+        return (wa ? wa.orderIndex : 0) - (wb ? wb.orderIndex : 0);
       });
     }
 
@@ -760,6 +925,9 @@
     session.isMobileLayout = Boolean(isMobile);
 
     if (session.isMobileLayout) {
+      if (dom.deckSelector && dom.menuSlotDecks) {
+        dom.menuSlotDecks.appendChild(dom.deckSelector);
+      }
       if (dom.statsWidget && dom.menuSlotStats) {
         dom.menuSlotStats.appendChild(dom.statsWidget);
       }
@@ -786,6 +954,9 @@
       if (dom.headerActions && dom.headerInner && dom.importFileInput) {
         dom.headerInner.insertBefore(dom.headerActions, dom.importFileInput);
       }
+      if (dom.deckSelector && dom.headerInner && dom.headerActions) {
+        dom.headerInner.insertBefore(dom.deckSelector, dom.headerActions);
+      }
       if (dom.statsWidget && dom.appContainer && dom.navigationBar) {
         dom.appContainer.insertBefore(dom.statsWidget, dom.navigationBar);
       }
@@ -800,21 +971,114 @@
     renderViewVisibility();
   }
 
+  function renderDeckSelector() {
+    if (!dom.deckSelector) return;
+
+    const fragment = document.createDocumentFragment();
+    const entries = [
+      { key: "all", title: "전체", count: WORDS.length },
+      ...DECKS.map((deck) => ({
+        key: deck.key,
+        title: deck.title,
+        count: deck.words.length,
+      })),
+    ];
+
+    for (const entry of entries) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "deck-pill-btn";
+      btn.dataset.deck = entry.key;
+
+      const isActive = session.activeDeck === entry.key;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-pressed", String(isActive));
+
+      const labelSpan = document.createElement("span");
+      labelSpan.textContent = entry.title;
+
+      const countSpan = document.createElement("span");
+      countSpan.className = "deck-pill-count";
+      countSpan.textContent = String(entry.count);
+
+      btn.append(labelSpan, countSpan);
+      fragment.appendChild(btn);
+    }
+
+    dom.deckSelector.innerHTML = "";
+    dom.deckSelector.appendChild(fragment);
+  }
+
+  function renderDayFilterOptions() {
+    if (!dom.dayFilter) return;
+
+    const deckWords = getActiveDeckWords();
+    const dayCounts = new Map();
+    let bookmarkedCount = 0;
+
+    for (const word of deckWords) {
+      dayCounts.set(word.day, (dayCounts.get(word.day) || 0) + 1);
+      if (getWordProgress(word.id).bookmarked) {
+        bookmarkedCount += 1;
+      }
+    }
+
+    const sortedDays = Array.from(dayCounts.keys()).sort((a, b) => a - b);
+    const validValues = new Set([
+      "smart-mix",
+      "all",
+      "bookmarked",
+      ...sortedDays.map((day) => String(day)),
+    ]);
+
+    if (!validValues.has(String(session.dayFilter))) {
+      session.dayFilter = "smart-mix";
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    const addOption = (value, text) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      fragment.appendChild(opt);
+    };
+
+    addOption("smart-mix", "오늘의 누적 복습 (스마트 믹스)");
+    addOption("all", `전체 Day (${deckWords.length})`);
+    for (const day of sortedDays) {
+      addOption(String(day), `Day ${day} (${dayCounts.get(day)})`);
+    }
+    addOption("bookmarked", `북마크 단어 (${bookmarkedCount})`);
+
+    dom.dayFilter.innerHTML = "";
+    dom.dayFilter.appendChild(fragment);
+    dom.dayFilter.value = session.dayFilter;
+  }
+
   function renderMobileHeaderStatus() {
     if (!dom.mobileStatusPill || !dom.mobileProgressText) return;
 
-    const isFiltered = session.dayFilter !== "smart-mix";
+    const isDeckFiltered = session.activeDeck !== "all";
+    const isDayFiltered = session.dayFilter !== "smart-mix";
+    const isFiltered = isDeckFiltered || isDayFiltered;
     dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
 
     if (dom.mobileFilterTag) {
+      const parts = [];
+      if (isDeckFiltered) {
+        parts.push(getActiveDeckTitle());
+      }
       if (session.dayFilter === "bookmarked") {
-        dom.mobileFilterTag.textContent = "★ 북마크";
-        dom.mobileFilterTag.hidden = false;
+        parts.push("★ 북마크");
       } else if (session.dayFilter === "all") {
-        dom.mobileFilterTag.textContent = "전체";
-        dom.mobileFilterTag.hidden = false;
-      } else if (isFiltered) {
-        dom.mobileFilterTag.textContent = `Day ${session.dayFilter}`;
+        parts.push("전체");
+      } else if (isDayFiltered) {
+        parts.push(`Day ${session.dayFilter}`);
+      }
+
+      if (parts.length > 0) {
+        dom.mobileFilterTag.textContent = parts.join(" ");
         dom.mobileFilterTag.hidden = false;
       } else {
         dom.mobileFilterTag.textContent = "";
@@ -843,12 +1107,13 @@
      ======================================================================== */
   function renderStats() {
     ensureTodayStats();
-    const totalWords = WORDS.length;
+    const deckWords = getActiveDeckWords();
+    const totalWords = deckWords.length;
     let masteredCount = 0;
     let wrongFocusCount = 0;
     let wrongArchiveCount = 0;
 
-    for (const word of WORDS) {
+    for (const word of deckWords) {
       const progress = getWordProgress(word.id);
       if (progress.level >= MAX_LEVEL) masteredCount += 1;
       if (isWrongFocusTarget(word.id)) wrongFocusCount += 1;
@@ -858,7 +1123,15 @@
     const masteryPercent =
       totalWords > 0 ? Math.round((masteredCount / totalWords) * 100) : 0;
 
-    dom.statTodayCount.textContent = String(persistedState.todayStats.count);
+    dom.statTodayCount.textContent = String(
+      getTodayCountForDeck(session.activeDeck),
+    );
+    if (dom.statMasteryLabel) {
+      dom.statMasteryLabel.textContent =
+        session.activeDeck === "all"
+          ? "전체 마스터"
+          : `${getActiveDeckTitle()} 마스터`;
+    }
     dom.statMasteryText.textContent = `${masteryPercent}% (${masteredCount}/${totalWords})`;
     dom.statMasteryBar.style.width = `${masteryPercent}%`;
     if (dom.headerMasteryBar) {
@@ -875,12 +1148,6 @@
     };
     updateBadge(dom.tabWrongStudyCount, wrongFocusCount);
     updateBadge(dom.tabArchiveCount, wrongArchiveCount);
-
-    // Update Day filter total label
-    const allOption = dom.dayFilter.querySelector('option[value="all"]');
-    if (allOption) {
-      allOption.textContent = `전체 Day (${totalWords})`;
-    }
   }
 
   function updateSegmentedIndicator() {
@@ -954,11 +1221,15 @@
 
     const isWrongMode = session.activeTab === "wrong-study";
     const isSmartMix = !isWrongMode && session.dayFilter === "smart-mix";
-    dom.deckModeBadge.textContent = isWrongMode
+    const modeLabel = isWrongMode
       ? "오답 집중 공략"
       : isSmartMix
         ? "스마트 믹스"
         : "전체 학습";
+    dom.deckModeBadge.textContent =
+      session.activeDeck === "all"
+        ? modeLabel
+        : `${getActiveDeckTitle()} · ${modeLabel}`;
     dom.deckModeBadge.classList.toggle("is-wrong-mode", isWrongMode);
 
     const word = getCurrentWord();
@@ -1015,10 +1286,15 @@
           dom.studyEmptyDesc.textContent =
             "학습 중 카드 우측 상단의 별표(B)를 눌러 중요 단어를 북마크해 보세요.";
           dom.returnToAllBtn.textContent = "스마트 믹스로 이동";
-        } else if (session.dayFilter === "smart-mix") {
+        } else if (
+          session.dayFilter === "smart-mix" &&
+          getActiveDeckWords().length > 0
+        ) {
           dom.studyEmptyTitle.textContent = "모든 단어를 마스터했습니다!";
           dom.studyEmptyDesc.textContent =
-            "전체 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요.";
+            session.activeDeck === "all"
+              ? "전체 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요."
+              : `${getActiveDeckTitle()} 단어장의 모든 단어가 Lv.3 마스터에 도달했습니다. 전체 Day 모드로 자유롭게 복습해 보세요.`;
           dom.returnToAllBtn.textContent = "전체 Day로 복습하기";
         } else {
           dom.studyEmptyTitle.textContent = "학습할 단어가 없습니다";
@@ -1042,6 +1318,9 @@
     dom.cardProgressText.textContent = `남은 ${session.queue.length}장 · 통과 ${session.passedCount}/${session.initialTotal}`;
 
     // Front face
+    if (dom.cardDeckBadge) {
+      dom.cardDeckBadge.textContent = word.deckTitle;
+    }
     dom.cardDayBadge.textContent = `Day ${word.day}`;
     dom.cardPos.textContent = word.pos;
     dom.cardWord.textContent = word.word;
@@ -1084,10 +1363,12 @@
       const pb = getWordProgress(b.id);
       if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
       if (pa.level !== pb.level) return pa.level - pb.level;
-      return a.id - b.id;
+      return compareWordsByOrder(a, b);
     });
 
-    const totalWrongAll = getAllWrongArchiveWords().length;
+    const totalWrongInDeck = getActiveDeckWrongArchiveWords().length;
+    const deckPrefix =
+      session.activeDeck === "all" ? "" : `${getActiveDeckTitle()} · `;
     const filterNote =
       session.dayFilter === "smart-mix" || session.dayFilter === "all"
         ? ""
@@ -1095,13 +1376,13 @@
           ? " (북마크 필터)"
           : ` (Day ${session.dayFilter})`;
 
-    dom.archiveSummaryText.textContent = `오답 횟수 높은 순 · 총 ${wrongWords.length}단어${filterNote}`;
+    dom.archiveSummaryText.textContent = `${deckPrefix}오답 횟수 높은 순 · 총 ${wrongWords.length}단어${filterNote}`;
     dom.hideMeaningToggle.checked = persistedState.hideMeanings;
     dom.archiveList.classList.toggle(
       "hide-meanings",
       persistedState.hideMeanings,
     );
-    dom.resetWrongBtn.disabled = totalWrongAll === 0;
+    dom.resetWrongBtn.disabled = totalWrongInDeck === 0;
 
     dom.archiveList.innerHTML = "";
 
@@ -1141,11 +1422,15 @@
       posSpan.className = "archive-pos";
       posSpan.textContent = word.pos;
 
+      const deckSpan = document.createElement("span");
+      deckSpan.className = "archive-deck";
+      deckSpan.textContent = word.deckTitle;
+
       const daySpan = document.createElement("span");
       daySpan.className = "archive-day";
       daySpan.textContent = `Day ${word.day}`;
 
-      topDiv.append(wordSpan, phoneticSpan, posSpan, daySpan);
+      topDiv.append(wordSpan, phoneticSpan, posSpan, deckSpan, daySpan);
 
       const meaningWrap = document.createElement("div");
       meaningWrap.className = "archive-meaning-wrap";
@@ -1257,6 +1542,10 @@
 
     ensureTodayStats();
     persistedState.todayStats.count += 1;
+    if (word.deckKey) {
+      persistedState.todayStats.byDeck[word.deckKey] =
+        (persistedState.todayStats.byDeck[word.deckKey] || 0) + 1;
+    }
 
     let toastMsg = "";
     let toastVariant = "default";
@@ -1360,6 +1649,7 @@
     const progress = getWordProgress(word.id);
     progress.bookmarked = !progress.bookmarked;
     savePersistedState();
+    renderDayFilterOptions();
 
     // If user unbookmarks while inside the bookmarked-only filter, refresh queue
     if (session.dayFilter === "bookmarked" && !progress.bookmarked) {
@@ -1406,11 +1696,15 @@
   }
 
   function resetAllWrong() {
-    const wrongWords = getAllWrongArchiveWords();
+    const wrongWords = getActiveDeckWrongArchiveWords();
     if (wrongWords.length === 0) return;
 
+    const deckScope =
+      session.activeDeck === "all"
+        ? "전체 단어장"
+        : `${getActiveDeckTitle()} 단어장`;
     const confirmed = window.confirm(
-      `누적된 오답 단어 ${wrongWords.length}개의 오답 기록을 모두 초기화할까요?`,
+      `${deckScope}의 누적된 오답 단어 ${wrongWords.length}개의 오답 기록을 모두 초기화할까요?`,
     );
     if (!confirmed) return;
 
@@ -1430,7 +1724,36 @@
     savePersistedState();
     buildSessionQueue();
     renderAll();
-    showToast("모든 오답 기록을 초기화했습니다.", "success");
+    showToast(`${deckScope}의 오답 기록을 초기화했습니다.`, "success");
+  }
+
+  function switchDeck(nextDeckKey) {
+    if (nextDeckKey !== "all" && !DECK_MAP.has(nextDeckKey)) return;
+    if (session.activeDeck === nextDeckKey) {
+      closeMobileMenu();
+      return;
+    }
+
+    session.activeDeck = nextDeckKey;
+    persistedState.selectedDeck = nextDeckKey;
+    savePersistedState();
+
+    renderDeckSelector();
+    renderDayFilterOptions();
+    clearSwipeClasses();
+    resetCardFlipInstant();
+
+    if (session.activeTab !== "wrong-archive") {
+      buildSessionQueue();
+    }
+
+    renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
+    closeMobileMenu();
+    showToast(
+      nextDeckKey === "all"
+        ? "전체 단어장으로 전환했습니다."
+        : `${getActiveDeckTitle()} 단어장으로 전환했습니다.`,
+    );
   }
 
   function switchTab(nextTab) {
@@ -1473,7 +1796,7 @@
     const payload = {
       app: "Lexicon Bridge Vocabulary",
       exportedAt: new Date().toISOString(),
-      version: 2,
+      version: 3,
       data: persistedState,
     };
 
@@ -1522,37 +1845,55 @@
         } else {
           nextState.theme = persistedState.theme;
         }
+        if (
+          typeof source.selectedDeck === "string" &&
+          (source.selectedDeck === "all" || DECK_MAP.has(source.selectedDeck))
+        ) {
+          nextState.selectedDeck = source.selectedDeck;
+        } else {
+          nextState.selectedDeck = session.activeDeck;
+        }
         nextState.hideMeanings = Boolean(source.hideMeanings);
 
         if (
           source.todayStats &&
           typeof source.todayStats === "object" &&
-          typeof source.todayStats.date === "string" &&
-          Number.isFinite(Number(source.todayStats.count))
+          typeof source.todayStats.date === "string"
         ) {
           const todayKey = getLocalDateKey();
-          nextState.todayStats = {
-            date: todayKey,
-            count:
-              source.todayStats.date === todayKey
-                ? Math.max(0, Math.floor(Number(source.todayStats.count)))
-                : 0,
-          };
+          if (source.todayStats.date === todayKey) {
+            const safeCount = Number.isFinite(Number(source.todayStats.count))
+              ? Math.max(0, Math.floor(Number(source.todayStats.count)))
+              : 0;
+            const safeByDeck = sanitizeTodayByDeck(source.todayStats.byDeck);
+            const byDeckSum = Object.values(safeByDeck).reduce(
+              (a, b) => a + b,
+              0,
+            );
+            nextState.todayStats = {
+              date: todayKey,
+              count: Math.max(safeCount, byDeckSum),
+              byDeck: safeByDeck,
+            };
+          }
         }
 
         let restoredCount = 0;
-        for (const word of WORDS) {
-          const rawEntry =
-            source.words[String(word.id)] ?? source.words[word.id];
-          if (rawEntry) {
-            nextState.words[word.id] = sanitizeWordEntry(rawEntry);
-            restoredCount += 1;
+        if (!Array.isArray(source.words)) {
+          for (const [key, rawEntry] of Object.entries(source.words)) {
+            if (key && rawEntry && typeof rawEntry === "object") {
+              nextState.words[key] = sanitizeWordEntry(rawEntry);
+              restoredCount += 1;
+            }
           }
         }
 
         persistedState = nextState;
+        session.activeDeck = persistedState.selectedDeck;
         applyTheme(persistedState.theme);
         savePersistedState();
+        renderDeckSelector();
+        renderDayFilterOptions();
         buildSessionQueue();
         renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
         closeMobileMenu();
@@ -1850,6 +2191,15 @@
       importBackupJson(file);
     });
 
+    // Dynamic Multi-Deck selector (event delegation)
+    if (dom.deckSelector) {
+      dom.deckSelector.addEventListener("click", (e) => {
+        const deckBtn = e.target.closest("button[data-deck]");
+        if (!deckBtn) return;
+        switchDeck(deckBtn.dataset.deck);
+      });
+    }
+
     // Mobile expandable menu controls & responsive breakpoint listener
     if (dom.mobileMenuBtn) {
       dom.mobileMenuBtn.addEventListener("click", toggleMobileMenu);
@@ -1966,7 +2316,7 @@
     dom.archiveList.addEventListener("click", (e) => {
       const actionBtn = e.target.closest("button[data-action]");
       if (actionBtn) {
-        const wordId = Number(actionBtn.dataset.wordId);
+        const wordId = actionBtn.dataset.wordId;
         const action = actionBtn.dataset.action;
 
         if (action === "speak") {
@@ -1992,10 +2342,19 @@
   }
 
   function init() {
+    loadDeckRegistry();
+    persistedState = loadPersistedState();
+    session.activeDeck =
+      persistedState.selectedDeck === "all" ||
+      DECK_MAP.has(persistedState.selectedDeck)
+        ? persistedState.selectedDeck
+        : "all";
+
     applyTheme(persistedState.theme);
     syncShortcutHintBar();
+    renderDeckSelector();
+    renderDayFilterOptions();
     syncResponsiveMenuPlacement(mobileMediaQuery.matches);
-    dom.dayFilter.value = session.dayFilter;
     dom.hideMeaningToggle.checked = persistedState.hideMeanings;
 
     buildSessionQueue();

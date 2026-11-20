@@ -295,6 +295,64 @@ kbd {
   color: var(--text-secondary);
 }
 
+/* Dynamic Multi-Deck Selector (Apple Toolbar Pill Tray) */
+.deck-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-segment);
+  border: 1px solid var(--border-hairline);
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.deck-selector::-webkit-scrollbar {
+  display: none;
+}
+
+.deck-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deck-pill-btn:hover {
+  color: var(--text-primary);
+}
+
+.deck-pill-btn.is-active {
+  background: var(--bg-segment-active);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-segment);
+}
+
+.deck-pill-count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+
+.deck-pill-btn.is-active .deck-pill-count {
+  color: var(--accent-blue);
+  opacity: 1;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -880,6 +938,20 @@ kbd {
   white-space: nowrap;
 }
 
+.deck-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+}
+
 .day-pill {
   display: inline-flex;
   align-items: center;
@@ -1422,6 +1494,16 @@ kbd {
   border-radius: var(--radius-pill);
 }
 
+.archive-deck {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border-hairline);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
 .archive-day {
   font-size: 0.72rem;
   font-weight: 600;
@@ -1735,6 +1817,7 @@ kbd {
   }
 
   /* Hide desktop-positioned blocks until moved inside #mobileMenu (zero FOUC) */
+  .app-header .deck-selector,
   .app-header .header-actions,
   .app-container > .stats-widget,
   .navigation-bar .filter-wrapper,
@@ -1771,7 +1854,7 @@ kbd {
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.015em;
-    max-width: 150px;
+    max-width: 175px;
     white-space: nowrap;
   }
 
@@ -1966,10 +2049,43 @@ kbd {
     padding: 12px 14px 14px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+  }
+
+  /* Dynamic Multi-Deck Pill Chips inside Mobile Menu */
+  .mobile-menu .deck-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+  }
+
+  .mobile-menu .deck-pill-btn {
+    height: 34px;
+    padding: 0 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-hairline);
+    box-shadow: var(--shadow-xs);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+  }
+
+  .mobile-menu .deck-pill-btn.is-active {
+    background: var(--accent-blue);
+    border-color: transparent;
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.28);
+  }
+
+  .mobile-menu .deck-pill-btn.is-active .deck-pill-count {
+    color: rgba(255, 255, 255, 0.88);
   }
 
   .menu-section {
