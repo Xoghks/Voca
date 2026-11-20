@@ -271,14 +271,28 @@ kbd {
 .brand-icon {
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  background: linear-gradient(145deg, #0a84ff 0%, #005ecb 100%);
-  color: #ffffff;
+  border-radius: 10px;
+  background: #111827;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.28);
+  box-shadow:
+    0 4px 12px rgba(17, 24, 39, 0.26),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .brand-icon {
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.48),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.brand-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .brand-text {
@@ -1852,14 +1866,14 @@ kbd {
   }
 
   .brand-icon {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: 9px;
   }
 
   .brand-icon svg {
-    width: 17px;
-    height: 17px;
+    width: 100%;
+    height: 100%;
   }
 
   .app-title {
