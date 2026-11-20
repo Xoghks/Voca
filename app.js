@@ -129,6 +129,7 @@
     importFileInput: document.getElementById("importFileInput"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
     themeToggleLabel: document.getElementById("themeToggleLabel"),
+    resetAllDataBtn: document.getElementById("resetAllDataBtn"),
     headerMasteryBar: document.getElementById("headerMasteryBar"),
 
     // Mobile Compact Header & Expandable Menu
@@ -450,7 +451,7 @@
     if (dom.themeColorMeta) {
       dom.themeColorMeta.setAttribute(
         "content",
-        resolved === "dark" ? "#000000" : "#f5f5f7",
+        resolved === "dark" ? "#000000" : "#F2F2F7",
       );
     }
     if (dom.themeToggleBtn) {
@@ -1956,7 +1957,7 @@
   }
 
   /* ========================================================================
-     10. JSON Export & Import (Backup / Restore)
+     10. JSON Export, Import & Full Reset (Backup / Restore / Reset)
      ======================================================================== */
   function exportBackupJson() {
     ensureTodayStats();
@@ -2082,6 +2083,78 @@
     };
 
     reader.readAsText(file, "utf-8");
+  }
+
+  function resetAllAppData() {
+    const firstConfirmed = window.confirm(
+      "⚠️ 전체 학습 데이터를 초기화할까요?\n\n" +
+        "• 모든 단어장의 숙련도·마스터 기록\n" +
+        "• 누적 오답노트 및 오답 횟수\n" +
+        "• 오늘 학습 통과 수 및 북마크\n\n" +
+        "초기화 후에는 복구할 수 없습니다.\n" +
+        "기록을 보관하려면 먼저 [백업]으로 JSON 파일을 저장해 주세요.",
+    );
+    if (!firstConfirmed) return;
+
+    const secondConfirmed = window.confirm(
+      "정말로 모든 학습 기록을 영구 삭제하고 처음 상태로 초기화할까요?",
+    );
+    if (!secondConfirmed) return;
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      clearSpeakingIndicator();
+    }
+
+    if (session.flyOutTimer) {
+      clearTimeout(session.flyOutTimer);
+      session.flyOutTimer = null;
+    }
+    if (session.enterTimer) {
+      clearTimeout(session.enterTimer);
+      session.enterTimer = null;
+    }
+    if (session.paceBumpTimer) {
+      clearTimeout(session.paceBumpTimer);
+      session.paceBumpTimer = null;
+    }
+
+    const currentTheme = persistedState.theme;
+
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      console.error("Failed to remove state from localStorage:", error);
+    }
+
+    persistedState = createDefaultState();
+    persistedState.theme = currentTheme;
+    savePersistedState();
+
+    session.activeDeck = "all";
+    session.activeTab = "all";
+    session.streamFilter = "smart-mix";
+    session.queue = [];
+    session.currentIndex = 0;
+    session.isFlipped = false;
+    session.isAnimating = false;
+
+    if (dom.hideMeaningToggle) {
+      dom.hideMeaningToggle.checked = false;
+    }
+    if (dom.importFileInput) {
+      dom.importFileInput.value = "";
+    }
+
+    clearSwipeClasses();
+    resetCardFlipInstant();
+    applyTheme(persistedState.theme);
+    renderDeckSelector();
+    renderStreamFilterOptions();
+    buildSessionQueue();
+    renderAll({ animateEnter: true });
+    closeMobileMenu();
+    showToast("모든 학습 데이터를 초기화했습니다.", "success");
   }
 
   /* ========================================================================
@@ -2357,6 +2430,9 @@
       const file = e.target.files && e.target.files[0];
       importBackupJson(file);
     });
+    if (dom.resetAllDataBtn) {
+      dom.resetAllDataBtn.addEventListener("click", resetAllAppData);
+    }
 
     // Dynamic Multi-Deck selector (event delegation)
     if (dom.deckSelector) {

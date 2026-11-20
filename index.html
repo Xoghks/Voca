@@ -17,15 +17,15 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="theme-color" content="#F2F2F7" />
     <title>Lexicon — 영단어 암기</title>
-    <link rel="stylesheet" href="style.css?v=5" />
-    <link rel="manifest" href="./manifest.json" />
+    <link rel="stylesheet" href="style.css?v=6" />
+    <link rel="manifest" href="./manifest.json?v=6" />
   </head>
   <body>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=5");
+        navigator.serviceWorker.register("./sw.js?v=6");
       }
     </script>
     <!-- 1. 상단 글래스모피즘 헤더 -->
@@ -162,6 +162,33 @@
             <span id="themeToggleLabel" class="header-action-label"
               >다크 모드</span
             >
+          </button>
+
+          <button
+            type="button"
+            id="resetAllDataBtn"
+            class="icon-btn icon-btn-danger"
+            title="전체 학습 데이터 초기화 (JSON 저장 기록 삭제)"
+            aria-label="전체 학습 데이터 초기화"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6" />
+              <path d="M14 11v6" />
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            </svg>
+            <span class="header-action-label">초기화</span>
           </button>
         </div>
 
@@ -840,10 +867,10 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=5" defer></script>
-    <script src="./data/toefl.js?v=5" defer></script>
+    <script src="./data/toeic.js?v=6" defer></script>
+    <script src="./data/toefl.js?v=6" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=5" defer></script>
+    <script src="app.js?v=6" defer></script>
   </body>
 </html>

@@ -3,8 +3,8 @@
   "short_name": "Lexicon",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#007AFF",
+  "background_color": "#F2F2F7",
+  "theme_color": "#F2F2F7",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/3898/3898082.png",

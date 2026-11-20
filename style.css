@@ -4,18 +4,18 @@
    ========================================================================== */
 
 :root {
-  /* Core Surfaces (Light) */
-  --bg-page: #f5f5f7;
+  /* Core Surfaces (Light — Apple System Grouped Background) */
+  --bg-page: #f2f2f7;
   --bg-surface: #ffffff;
   --bg-elevated: #ffffff;
   --bg-subtle: rgba(118, 118, 128, 0.1);
   --bg-subtle-hover: rgba(118, 118, 128, 0.16);
   --bg-segment: rgba(118, 118, 128, 0.12);
   --bg-segment-active: #ffffff;
-  --bg-glass-header: rgba(245, 245, 247, 0.72);
+  --bg-glass-header: rgba(242, 242, 247, 0.78);
   --bg-glass-dock: rgba(255, 255, 255, 0.78);
   --bg-glass-menu: rgba(248, 248, 250, 0.88);
-  --bg-example: #f5f5f7;
+  --bg-example: #f2f2f7;
   --bg-kbd: rgba(0, 0, 0, 0.05);
 
   /* Typography */
@@ -134,15 +134,21 @@
 }
 
 html {
+  min-height: 100vh;
+  min-height: 100dvh;
   font-size: 16px;
+  background-color: var(--bg-page);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--duration-base) var(--ease-standard);
 }
 
 body {
+  min-height: 100vh;
   min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
     "Apple SD Gothic Neo", "Pretendard Variable", "Pretendard", "Noto Sans KR",
@@ -375,6 +381,16 @@ kbd {
   background: var(--bg-subtle-hover);
 }
 
+.icon-btn-danger {
+  color: var(--accent-red);
+  background: var(--accent-red-soft);
+}
+
+.icon-btn-danger:hover {
+  background: var(--accent-red);
+  color: #ffffff;
+}
+
 .header-action-label {
   display: none;
 }
@@ -383,8 +399,7 @@ kbd {
 .mobile-header-controls,
 .header-mastery-track,
 .mobile-menu-backdrop,
-.mobile-menu,
-.hint-mobile {
+.mobile-menu {
   display: none;
 }
 
@@ -1179,15 +1194,35 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
+  text-align: center;
   font-size: 0.78rem;
   font-weight: 500;
   color: var(--text-tertiary);
 }
 
-.card-bottom-hint span {
+.card-bottom-hint .hint-desktop {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
+}
+
+.card-bottom-hint .hint-mobile {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  .card-bottom-hint .hint-desktop {
+    display: none;
+  }
+
+  .card-bottom-hint .hint-mobile {
+    display: inline-flex;
+  }
 }
 
 /* ==========================================================================
@@ -1783,13 +1818,17 @@ kbd {
 
   html,
   body {
+    min-height: 100vh;
+    min-height: 100dvh;
     height: 100vh;
     height: 100dvh;
+    background-color: var(--bg-page);
     overflow: hidden;
     overscroll-behavior: none;
   }
 
   body {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     display: flex;
     flex-direction: column;
   }
@@ -1838,12 +1877,15 @@ kbd {
   .navigation-bar .filter-wrapper,
   .deck-meta,
   .rating-key,
-  .shortcut-hint-bar,
-  .hint-desktop {
+  .shortcut-hint-bar {
     display: none;
   }
 
-  .hint-mobile {
+  .card-bottom-hint .hint-desktop {
+    display: none;
+  }
+
+  .card-bottom-hint .hint-mobile {
     display: inline-flex;
   }
 
@@ -2199,22 +2241,22 @@ kbd {
     flex-shrink: 0;
   }
 
-  /* Apple Control Center Action Tiles (Theme, Export, Import) inside Menu */
+  /* Apple Control Center Action Tiles (Theme, Export, Import, Reset) inside Menu */
   .mobile-menu .header-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
     width: 100%;
   }
 
   .mobile-menu .icon-btn {
     width: 100%;
     height: auto;
-    min-height: 60px;
-    padding: 10px 6px;
+    min-height: 58px;
+    padding: 9px 4px;
     border-radius: 14px;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-hairline);
     box-shadow: var(--shadow-xs);
@@ -2222,15 +2264,26 @@ kbd {
 
   .mobile-menu .header-action-label {
     display: block;
-    font-size: 0.73rem;
+    font-size: 0.7rem;
     font-weight: 600;
-    letter-spacing: -0.015em;
+    letter-spacing: -0.02em;
     color: var(--text-secondary);
     line-height: 1;
+    white-space: nowrap;
   }
 
   .mobile-menu #themeToggleBtn {
     order: -1;
+  }
+
+  .mobile-menu .icon-btn-danger {
+    background: var(--accent-red-soft);
+    border-color: rgba(255, 59, 48, 0.22);
+    color: var(--accent-red);
+  }
+
+  .mobile-menu .icon-btn-danger .header-action-label {
+    color: var(--accent-red);
   }
 
   [data-theme="dark"] .mobile-menu #themeToggleBtn {
@@ -2262,7 +2315,7 @@ kbd {
     flex: 1;
     min-height: 0;
     width: 100%;
-    padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    padding: 8px 12px 10px;
     gap: 8px;
     overflow: visible;
   }
