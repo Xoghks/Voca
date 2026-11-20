@@ -19,13 +19,15 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#F2F2F7" />
     <title>Lexicon — 영단어 암기</title>
-    <link rel="stylesheet" href="style.css?v=6" />
-    <link rel="manifest" href="./manifest.json?v=6" />
+    <link rel="stylesheet" href="style.css?v=7" />
+    <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=6");
+        navigator.serviceWorker.register("./sw.js", {
+          updateViaCache: "none",
+        });
       }
     </script>
     <!-- 1. 상단 글래스모피즘 헤더 -->
@@ -867,10 +869,10 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=6" defer></script>
-    <script src="./data/toefl.js?v=6" defer></script>
+    <script src="./data/toeic.js?v=7" defer></script>
+    <script src="./data/toefl.js?v=7" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=6" defer></script>
+    <script src="app.js?v=7" defer></script>
   </body>
 </html>
