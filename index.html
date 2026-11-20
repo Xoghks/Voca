@@ -9,13 +9,13 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f5f5f7" />
     <title>Lexicon — 영단어 암기</title>
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=2" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
     <script>
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js");
+        navigator.serviceWorker.register("./sw.js?v=2");
       }
     </script>
     <!-- 1. 상단 글래스모피즘 헤더 -->
@@ -235,6 +235,7 @@
     <div
       id="mobileMenuBackdrop"
       class="mobile-menu-backdrop"
+      hidden
       aria-hidden="true"
     ></div>
     <aside
@@ -243,6 +244,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="학습 현황 및 설정 메뉴"
+      hidden
       aria-hidden="true"
     >
       <div class="mobile-menu-header">
@@ -782,7 +784,7 @@
       aria-atomic="true"
     ></div>
 
-    <script src="words.js" defer></script>
-    <script src="app.js" defer></script>
+    <script src="words.js?v=2" defer></script>
+    <script src="app.js?v=2" defer></script>
   </body>
 </html>

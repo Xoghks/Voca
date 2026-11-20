@@ -225,6 +225,7 @@
     isAnimating: false,
     isMobileLayout: false,
     isMenuOpen: false,
+    menuCloseTimer: null,
     toastTimer: null,
     enterTimer: null,
   };
@@ -494,7 +495,19 @@
      ======================================================================== */
   function openMobileMenu() {
     if (!session.isMobileLayout || !dom.mobileMenu) return;
+    if (session.menuCloseTimer) {
+      clearTimeout(session.menuCloseTimer);
+      session.menuCloseTimer = null;
+    }
+
     session.isMenuOpen = true;
+    dom.mobileMenu.hidden = false;
+    if (dom.mobileMenuBackdrop) {
+      dom.mobileMenuBackdrop.hidden = false;
+    }
+    // Force reflow so transition animates cleanly after removing hidden
+    void dom.mobileMenu.offsetWidth;
+
     dom.mobileMenu.classList.add("is-open");
     dom.mobileMenu.setAttribute("aria-hidden", "false");
     if ("inert" in dom.mobileMenu) {
@@ -513,8 +526,15 @@
     }
   }
 
-  function closeMobileMenu() {
+  function closeMobileMenu(options = {}) {
     if (!dom.mobileMenu) return;
+    const immediate = Boolean(options && options.immediate === true);
+
+    if (session.menuCloseTimer) {
+      clearTimeout(session.menuCloseTimer);
+      session.menuCloseTimer = null;
+    }
+
     session.isMenuOpen = false;
     dom.mobileMenu.classList.remove("is-open");
     dom.mobileMenu.setAttribute("aria-hidden", "true");
@@ -532,6 +552,24 @@
     if (dom.mobileMenuBtnText) {
       dom.mobileMenuBtnText.textContent = "메뉴";
     }
+
+    if (immediate) {
+      dom.mobileMenu.hidden = true;
+      if (dom.mobileMenuBackdrop) {
+        dom.mobileMenuBackdrop.hidden = true;
+      }
+      return;
+    }
+
+    session.menuCloseTimer = setTimeout(() => {
+      if (!session.isMenuOpen) {
+        dom.mobileMenu.hidden = true;
+        if (dom.mobileMenuBackdrop) {
+          dom.mobileMenuBackdrop.hidden = true;
+        }
+      }
+      session.menuCloseTimer = null;
+    }, 340);
   }
 
   function toggleMobileMenu() {
@@ -558,11 +596,17 @@
       if (dom.headerActions && dom.menuSlotAppActions) {
         dom.menuSlotAppActions.appendChild(dom.headerActions);
       }
-      if (dom.mobileMenu && "inert" in dom.mobileMenu) {
-        dom.mobileMenu.inert = !session.isMenuOpen;
+      if (dom.mobileMenu) {
+        dom.mobileMenu.hidden = !session.isMenuOpen;
+        if ("inert" in dom.mobileMenu) {
+          dom.mobileMenu.inert = !session.isMenuOpen;
+        }
+      }
+      if (dom.mobileMenuBackdrop) {
+        dom.mobileMenuBackdrop.hidden = !session.isMenuOpen;
       }
     } else {
-      closeMobileMenu();
+      closeMobileMenu({ immediate: true });
       if (dom.headerActions && dom.headerInner && dom.importFileInput) {
         dom.headerInner.insertBefore(dom.headerActions, dom.importFileInput);
       }
