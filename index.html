@@ -23,7 +23,7 @@
     <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
-    <link rel="stylesheet" href="style.css?v=8" />
+    <link rel="stylesheet" href="style.css?v=9" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
@@ -110,6 +110,39 @@
         ></nav>
 
         <div class="header-actions" id="headerActions">
+          <button
+            type="button"
+            id="cloudMenuBtn"
+            class="icon-btn cloud-header-btn"
+            title="클라우드 계정 동기화"
+            aria-label="클라우드 계정 동기화 열기"
+            aria-expanded="false"
+            aria-controls="mobileMenu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="17"
+              height="17"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+            </svg>
+            <span
+              id="cloudHeaderStatusDot"
+              class="cloud-status-dot"
+              hidden
+              aria-hidden="true"
+            ></span>
+            <span id="cloudHeaderLabel" class="cloud-header-label"
+              >클라우드</span
+            >
+          </button>
+
           <button
             type="button"
             id="exportBtn"
@@ -337,7 +370,9 @@
       aria-hidden="true"
     >
       <div class="mobile-menu-header">
-        <span class="mobile-menu-title">학습 현황 · 설정</span>
+        <span id="mobileMenuTitle" class="mobile-menu-title"
+          >학습 현황 · 설정</span
+        >
         <button
           type="button"
           id="mobileMenuCloseBtn"
@@ -362,22 +397,155 @@
       </div>
 
       <div class="mobile-menu-body">
-        <div class="menu-section">
+        <div class="menu-section menu-section-mobile-only">
           <span class="menu-section-label">단어장 선택</span>
           <div id="menuSlotDecks" class="menu-slot"></div>
         </div>
 
-        <div class="menu-section">
+        <div class="menu-section menu-section-mobile-only">
           <span class="menu-section-label">실시간 통계</span>
           <div id="menuSlotStats" class="menu-slot"></div>
         </div>
 
-        <div class="menu-section">
+        <div class="menu-section menu-section-mobile-only">
           <span class="menu-section-label">학습 필터 · 덱</span>
           <div id="menuSlotStudyControls" class="menu-slot menu-slot-controls"></div>
         </div>
 
-        <div class="menu-section">
+        <div id="cloudSyncSection" class="menu-section menu-section-cloud">
+          <div class="menu-section-head">
+            <span class="menu-section-label">클라우드 계정 동기화</span>
+            <span id="cloudSyncBadge" class="cloud-sync-badge">
+              <span class="cloud-badge-dot" aria-hidden="true"></span>
+              <span id="cloudSyncBadgeText">로컬 저장</span>
+            </span>
+          </div>
+
+          <div class="cloud-sync-card">
+            <!-- 비로그인 상태: ID/PW 즉시 회원가입 · 로그인 -->
+            <form
+              id="cloudAuthLoggedOut"
+              class="cloud-auth-form"
+              novalidate
+            >
+              <div class="cloud-input-row">
+                <div class="cloud-input-wrap cloud-input-with-suffix">
+                  <input
+                    type="text"
+                    id="cloudUsernameInput"
+                    class="cloud-input"
+                    placeholder="아이디 (예: taehwan)"
+                    autocomplete="username"
+                    autocapitalize="none"
+                    autocorrect="off"
+                    spellcheck="false"
+                    maxlength="32"
+                    aria-label="클라우드 아이디"
+                  />
+                  <span class="cloud-input-suffix" aria-hidden="true"
+                    >@lexicon.app</span
+                  >
+                </div>
+                <div class="cloud-input-wrap">
+                  <input
+                    type="password"
+                    id="cloudPasswordInput"
+                    class="cloud-input"
+                    placeholder="비밀번호 (6자 이상)"
+                    autocomplete="current-password"
+                    minlength="6"
+                    aria-label="클라우드 비밀번호"
+                  />
+                </div>
+              </div>
+
+              <div class="cloud-btn-row">
+                <button
+                  type="submit"
+                  id="cloudLoginBtn"
+                  class="cloud-btn cloud-btn-primary"
+                >
+                  로그인
+                </button>
+                <button
+                  type="button"
+                  id="cloudSignupBtn"
+                  class="cloud-btn cloud-btn-secondary"
+                >
+                  회원가입
+                </button>
+              </div>
+
+              <p
+                id="cloudAuthMessage"
+                class="cloud-auth-message"
+                hidden
+                role="alert"
+              ></p>
+            </form>
+
+            <!-- 로그인 완료 상태: 계정 · 마지막 동기화 · 지금 동기화 · 로그아웃 -->
+            <div id="cloudAuthLoggedIn" class="cloud-account-box" hidden>
+              <div class="cloud-account-row">
+                <span id="cloudAvatar" class="cloud-avatar" aria-hidden="true"
+                  >L</span
+                >
+                <div class="cloud-account-meta">
+                  <strong id="cloudAccountName" class="cloud-account-name"
+                    >-</strong
+                  >
+                  <span id="cloudLastSyncText" class="cloud-last-sync"
+                    >마지막 동기화: 대기 중</span
+                  >
+                </div>
+              </div>
+
+              <div class="cloud-btn-row">
+                <button
+                  type="button"
+                  id="cloudSyncNowBtn"
+                  class="cloud-btn cloud-btn-primary"
+                >
+                  <svg
+                    class="cloud-sync-icon"
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.1"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path
+                      d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                    />
+                  </svg>
+                  <span>지금 동기화</span>
+                </button>
+                <button
+                  type="button"
+                  id="cloudLogoutBtn"
+                  class="cloud-btn cloud-btn-ghost"
+                >
+                  로그아웃
+                </button>
+              </div>
+
+              <p
+                id="cloudSyncedMessage"
+                class="cloud-auth-message"
+                hidden
+                role="status"
+              ></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="menu-section menu-section-mobile-only">
           <span class="menu-section-label">화면 · 데이터</span>
           <div id="menuSlotAppActions" class="menu-slot menu-slot-actions"></div>
         </div>
@@ -912,10 +1080,13 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=8" defer></script>
-    <script src="./data/toefl.js?v=8" defer></script>
+    <script src="./data/toeic.js?v=9" defer></script>
+    <script src="./data/toefl.js?v=9" defer></script>
+
+    <!-- Supabase JS v2 SDK (클라우드 실시간 동기화 — 오프라인 시에도 안전하게 무시됨) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=8" defer></script>
+    <script src="app.js?v=9" defer></script>
   </body>
 </html>

@@ -5,6 +5,16 @@
      1. Constants & Storage Configuration
      ======================================================================== */
   const STORAGE_KEY = "lexicon_vocab_app_v1";
+  const RAW_SUPABASE_URL = "https://stibdufkgmiyyvhynpqa.supabase.co/rest/v1/";
+  const SUPABASE_URL = RAW_SUPABASE_URL.replace(/\/rest\/v1\/?$/i, "").replace(
+    /\/+$/,
+    "",
+  );
+  const SUPABASE_ANON_KEY = "sb_publishable_0pzgMO21KhgQeSFIDzkNYg_u3mL69dn";
+  const CLOUD_EMAIL_DOMAIN = "lexicon.app";
+  const CLOUD_PROGRESS_TABLE = "user_progress";
+  const CLOUD_SYNC_DEBOUNCE_MS = 1500;
+  const CLOUD_PULL_COOLDOWN_MS = 15000;
   const VALID_STATUSES = new Set(["new", "wrong", "hard", "good", "master"]);
   const VALID_STREAM_FILTERS = new Set([
     "smart-mix",
@@ -124,6 +134,9 @@
     headerInner: document.querySelector(".header-inner"),
     deckSelector: document.getElementById("deckSelector"),
     headerActions: document.getElementById("headerActions"),
+    cloudMenuBtn: document.getElementById("cloudMenuBtn"),
+    cloudHeaderStatusDot: document.getElementById("cloudHeaderStatusDot"),
+    cloudHeaderLabel: document.getElementById("cloudHeaderLabel"),
     exportBtn: document.getElementById("exportBtn"),
     importBtn: document.getElementById("importBtn"),
     importFileInput: document.getElementById("importFileInput"),
@@ -141,11 +154,29 @@
     mobileMenuDot: document.getElementById("mobileMenuDot"),
     mobileMenuBackdrop: document.getElementById("mobileMenuBackdrop"),
     mobileMenu: document.getElementById("mobileMenu"),
+    mobileMenuTitle: document.getElementById("mobileMenuTitle"),
     mobileMenuCloseBtn: document.getElementById("mobileMenuCloseBtn"),
     menuSlotDecks: document.getElementById("menuSlotDecks"),
     menuSlotStats: document.getElementById("menuSlotStats"),
     menuSlotStudyControls: document.getElementById("menuSlotStudyControls"),
     menuSlotAppActions: document.getElementById("menuSlotAppActions"),
+
+    // Cloud Account & Supabase Sync UI
+    cloudSyncBadge: document.getElementById("cloudSyncBadge"),
+    cloudSyncBadgeText: document.getElementById("cloudSyncBadgeText"),
+    cloudAuthLoggedOut: document.getElementById("cloudAuthLoggedOut"),
+    cloudUsernameInput: document.getElementById("cloudUsernameInput"),
+    cloudPasswordInput: document.getElementById("cloudPasswordInput"),
+    cloudLoginBtn: document.getElementById("cloudLoginBtn"),
+    cloudSignupBtn: document.getElementById("cloudSignupBtn"),
+    cloudAuthMessage: document.getElementById("cloudAuthMessage"),
+    cloudAuthLoggedIn: document.getElementById("cloudAuthLoggedIn"),
+    cloudAvatar: document.getElementById("cloudAvatar"),
+    cloudAccountName: document.getElementById("cloudAccountName"),
+    cloudLastSyncText: document.getElementById("cloudLastSyncText"),
+    cloudSyncNowBtn: document.getElementById("cloudSyncNowBtn"),
+    cloudLogoutBtn: document.getElementById("cloudLogoutBtn"),
+    cloudSyncedMessage: document.getElementById("cloudSyncedMessage"),
 
     // Main Containers & Stats
     appContainer: document.querySelector(".app-container"),
@@ -253,6 +284,7 @@
       theme: getSystemDefaultTheme(),
       selectedDeck: "all",
       hideMeanings: false,
+      updatedAt: null,
       todayStats: {
         date: getLocalDateKey(),
         count: 0,
@@ -260,6 +292,128 @@
       },
       words: {},
     };
+  }
+
+  function parseTimestampMs(value) {
+    if (!value) return 0;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function normalizeIsoTimestamp(value) {
+    const ms = parseTimestampMs(value);
+    return ms > 0 ? new Date(ms).toISOString() : null;
+  }
+
+  function hasMeaningfulProgress(state) {
+    if (!state || typeof state !== "object") return false;
+    if (state.todayStats && Number(state.todayStats.count) > 0) return true;
+    if (!state.words || typeof state.words !== "object") return false;
+    for (const entry of Object.values(state.words)) {
+      if (!entry || typeof entry !== "object") continue;
+      if (
+        entry.level > 0 ||
+        entry.wrongCount > 0 ||
+        entry.bookmarked ||
+        entry.lastStudied !== null ||
+        entry.status !== "new"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function inferLegacyUpdatedAt(wordsObj, todayStats) {
+    let maxMs = 0;
+    let hasAnyActivity = Boolean(todayStats && Number(todayStats.count) > 0);
+    if (wordsObj && typeof wordsObj === "object") {
+      for (const entry of Object.values(wordsObj)) {
+        if (!entry || typeof entry !== "object") continue;
+        if (entry.lastStudied && entry.lastStudied > maxMs) {
+          maxMs = entry.lastStudied;
+        }
+        if (
+          entry.level > 0 ||
+          entry.wrongCount > 0 ||
+          entry.bookmarked ||
+          entry.status !== "new"
+        ) {
+          hasAnyActivity = true;
+        }
+      }
+    }
+    if (maxMs > 0) return new Date(maxMs).toISOString();
+    if (hasAnyActivity) return new Date(1000).toISOString();
+    return null;
+  }
+
+  function sanitizeStatePayload(raw, options = {}) {
+    const {
+      fallbackTheme = getSystemDefaultTheme(),
+      fallbackDeck = "all",
+      overrideUpdatedAt = null,
+    } = options;
+    const state = createDefaultState();
+    state.theme = fallbackTheme === "dark" ? "dark" : "light";
+    state.selectedDeck =
+      fallbackDeck === "all" || DECK_MAP.has(fallbackDeck)
+        ? fallbackDeck
+        : "all";
+
+    if (!raw || typeof raw !== "object") return state;
+
+    if (raw.theme === "light" || raw.theme === "dark") {
+      state.theme = raw.theme;
+    }
+    if (
+      typeof raw.selectedDeck === "string" &&
+      (raw.selectedDeck === "all" || DECK_MAP.has(raw.selectedDeck))
+    ) {
+      state.selectedDeck = raw.selectedDeck;
+    }
+    state.hideMeanings = Boolean(raw.hideMeanings);
+
+    const todayKey = getLocalDateKey();
+    if (
+      raw.todayStats &&
+      typeof raw.todayStats === "object" &&
+      raw.todayStats.date === todayKey
+    ) {
+      const safeCount = Number.isFinite(Number(raw.todayStats.count))
+        ? Math.max(0, Math.floor(Number(raw.todayStats.count)))
+        : 0;
+      const safeByDeck = sanitizeTodayByDeck(raw.todayStats.byDeck);
+      const byDeckSum = Object.values(safeByDeck).reduce((a, b) => a + b, 0);
+      state.todayStats = {
+        date: todayKey,
+        count: Math.max(safeCount, byDeckSum),
+        byDeck: safeByDeck,
+      };
+    }
+
+    if (
+      raw.words &&
+      typeof raw.words === "object" &&
+      !Array.isArray(raw.words)
+    ) {
+      for (const [key, entry] of Object.entries(raw.words)) {
+        if (key && entry && typeof entry === "object") {
+          state.words[key] = sanitizeWordEntry(entry);
+        }
+      }
+    }
+
+    const explicitUpdated =
+      normalizeIsoTimestamp(overrideUpdatedAt) ||
+      normalizeIsoTimestamp(raw.updatedAt);
+    state.updatedAt =
+      explicitUpdated || inferLegacyUpdatedAt(state.words, state.todayStats);
+
+    return state;
   }
 
   function sanitizeTodayByDeck(rawByDeck) {
@@ -326,50 +480,7 @@
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return fallback;
 
-      const state = createDefaultState();
-      if (parsed.theme === "light" || parsed.theme === "dark") {
-        state.theme = parsed.theme;
-      }
-      if (
-        typeof parsed.selectedDeck === "string" &&
-        (parsed.selectedDeck === "all" || DECK_MAP.has(parsed.selectedDeck))
-      ) {
-        state.selectedDeck = parsed.selectedDeck;
-      }
-      state.hideMeanings = Boolean(parsed.hideMeanings);
-
-      const todayKey = getLocalDateKey();
-      if (
-        parsed.todayStats &&
-        typeof parsed.todayStats === "object" &&
-        parsed.todayStats.date === todayKey
-      ) {
-        const safeCount = Number.isFinite(Number(parsed.todayStats.count))
-          ? Math.max(0, Math.floor(Number(parsed.todayStats.count)))
-          : 0;
-        const safeByDeck = sanitizeTodayByDeck(parsed.todayStats.byDeck);
-        const byDeckSum = Object.values(safeByDeck).reduce((a, b) => a + b, 0);
-        state.todayStats = {
-          date: todayKey,
-          count: Math.max(safeCount, byDeckSum),
-          byDeck: safeByDeck,
-        };
-      }
-
-      // Safely retain all valid word records (including future/inactive decks & legacy entries)
-      if (
-        parsed.words &&
-        typeof parsed.words === "object" &&
-        !Array.isArray(parsed.words)
-      ) {
-        for (const [key, entry] of Object.entries(parsed.words)) {
-          if (key && entry && typeof entry === "object") {
-            state.words[key] = sanitizeWordEntry(entry);
-          }
-        }
-      }
-
-      return state;
+      return sanitizeStatePayload(parsed);
     } catch (error) {
       console.error("Failed to load state from localStorage:", error);
       return fallback;
@@ -394,6 +505,21 @@
     toastTimer: null,
     enterTimer: null,
     paceBumpTimer: null,
+  };
+
+  // Cloud Sync Runtime State (Supabase)
+  const cloud = {
+    client: null,
+    sdkReady: false,
+    user: null,
+    status: "local", // 'local' | 'synced' | 'syncing' | 'offline' | 'error'
+    lastSyncedAt: null,
+    lastPullCheckMs: 0,
+    isAuthBusy: false,
+    isSyncing: false,
+    pendingPush: false,
+    debounceTimer: null,
+    activeAuthUserId: null,
   };
 
   function ensureTodayStats() {
@@ -431,13 +557,30 @@
     return persistedState.words[wordId];
   }
 
-  function savePersistedState() {
+  function savePersistedState(options = {}) {
+    const {
+      markUpdated = true,
+      syncCloud = true,
+      immediateCloud = false,
+    } = options;
+
     try {
       ensureTodayStats();
+      if (markUpdated) {
+        persistedState.updatedAt = new Date().toISOString();
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
     } catch (error) {
       console.error("Failed to save state to localStorage:", error);
       showToast("브라우저 저장 공간에 기록하지 못했습니다.", "error");
+    }
+
+    if (syncCloud && cloud.user && cloud.client) {
+      if (immediateCloud) {
+        flushCloudPush({ silent: true });
+      } else {
+        scheduleCloudPush();
+      }
     }
   }
 
@@ -471,7 +614,7 @@
   function toggleTheme() {
     const nextTheme = persistedState.theme === "dark" ? "light" : "dark";
     applyTheme(nextTheme);
-    savePersistedState();
+    savePersistedState({ markUpdated: false, syncCloud: false });
     showToast(
       nextTheme === "dark"
         ? "다크 모드로 전환했습니다."
@@ -941,15 +1084,23 @@
   }
 
   /* ========================================================================
-     7.5. Mobile Expandable Menu & Responsive Placement
+     7.5. Expandable Menu Sheet (Desktop Cloud Popover & Mobile Full Sheet)
      ======================================================================== */
+  function syncMenuHeaderTitle() {
+    if (!dom.mobileMenuTitle) return;
+    dom.mobileMenuTitle.textContent = session.isMobileLayout
+      ? "학습 현황 · 설정"
+      : "클라우드 계정 동기화";
+  }
+
   function openMobileMenu() {
-    if (!session.isMobileLayout || !dom.mobileMenu) return;
+    if (!dom.mobileMenu) return;
     if (session.menuCloseTimer) {
       clearTimeout(session.menuCloseTimer);
       session.menuCloseTimer = null;
     }
 
+    syncMenuHeaderTitle();
     session.isMenuOpen = true;
     dom.mobileMenu.hidden = false;
     if (dom.mobileMenuBackdrop) {
@@ -970,6 +1121,10 @@
       dom.mobileMenuBtn.classList.add("is-open");
       dom.mobileMenuBtn.setAttribute("aria-expanded", "true");
       dom.mobileMenuBtn.setAttribute("aria-label", "통계 및 설정 메뉴 닫기");
+    }
+    if (dom.cloudMenuBtn) {
+      dom.cloudMenuBtn.classList.add("is-open");
+      dom.cloudMenuBtn.setAttribute("aria-expanded", "true");
     }
     if (dom.mobileMenuBtnText) {
       dom.mobileMenuBtnText.textContent = "닫기";
@@ -998,6 +1153,10 @@
       dom.mobileMenuBtn.classList.remove("is-open");
       dom.mobileMenuBtn.setAttribute("aria-expanded", "false");
       dom.mobileMenuBtn.setAttribute("aria-label", "통계 및 설정 메뉴 열기");
+    }
+    if (dom.cloudMenuBtn) {
+      dom.cloudMenuBtn.classList.remove("is-open");
+      dom.cloudMenuBtn.setAttribute("aria-expanded", "false");
     }
     if (dom.mobileMenuBtnText) {
       dom.mobileMenuBtnText.textContent = "메뉴";
@@ -1032,6 +1191,7 @@
 
   function syncResponsiveMenuPlacement(isMobile) {
     session.isMobileLayout = Boolean(isMobile);
+    syncMenuHeaderTitle();
 
     if (session.isMobileLayout) {
       if (dom.deckSelector && dom.menuSlotDecks) {
@@ -1902,7 +2062,7 @@
 
     session.activeDeck = nextDeckKey;
     persistedState.selectedDeck = nextDeckKey;
-    savePersistedState();
+    savePersistedState({ markUpdated: false, syncCloud: false });
 
     renderDeckSelector();
     renderStreamFilterOptions();
@@ -2059,7 +2219,11 @@
         persistedState = nextState;
         session.activeDeck = persistedState.selectedDeck;
         applyTheme(persistedState.theme);
-        savePersistedState();
+        savePersistedState({
+          markUpdated: true,
+          syncCloud: true,
+          immediateCloud: true,
+        });
         renderDeckSelector();
         renderStreamFilterOptions();
         buildSessionQueue();
@@ -2086,12 +2250,16 @@
   }
 
   function resetAllAppData() {
+    const cloudNotice = cloud.user
+      ? "• 로그인된 클라우드 동기화 기록도 함께 초기화됩니다.\n"
+      : "";
     const firstConfirmed = window.confirm(
       "⚠️ 전체 학습 데이터를 초기화할까요?\n\n" +
         "• 모든 단어장의 숙련도·마스터 기록\n" +
         "• 누적 오답노트 및 오답 횟수\n" +
-        "• 오늘 학습 통과 수 및 북마크\n\n" +
-        "초기화 후에는 복구할 수 없습니다.\n" +
+        "• 오늘 학습 통과 수 및 북마크\n" +
+        cloudNotice +
+        "\n초기화 후에는 복구할 수 없습니다.\n" +
         "기록을 보관하려면 먼저 [백업]으로 JSON 파일을 저장해 주세요.",
     );
     if (!firstConfirmed) return;
@@ -2129,7 +2297,11 @@
 
     persistedState = createDefaultState();
     persistedState.theme = currentTheme;
-    savePersistedState();
+    savePersistedState({
+      markUpdated: true,
+      syncCloud: true,
+      immediateCloud: true,
+    });
 
     session.activeDeck = "all";
     session.activeTab = "all";
@@ -2155,6 +2327,741 @@
     renderAll({ animateEnter: true });
     closeMobileMenu();
     showToast("모든 학습 데이터를 초기화했습니다.", "success");
+  }
+
+  /* ========================================================================
+     10.5. Cloud Account & Supabase Real-Time Sync
+     ======================================================================== */
+  function extractDisplayUsername(user) {
+    if (!user || !user.email) return "계정";
+    const suffix = `@${CLOUD_EMAIL_DOMAIN}`;
+    if (user.email.toLowerCase().endsWith(suffix)) {
+      return user.email.slice(0, -suffix.length);
+    }
+    return user.email;
+  }
+
+  function normalizeUsernameToEmail(rawInput) {
+    const trimmed = String(rawInput || "")
+      .trim()
+      .toLowerCase();
+    if (!trimmed) {
+      return { error: "아이디를 입력해 주세요." };
+    }
+
+    if (trimmed.includes("@")) {
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+      if (!emailOk) {
+        return { error: "올바른 아이디 또는 이메일 형식이 아닙니다." };
+      }
+      const displayName = trimmed.endsWith(`@${CLOUD_EMAIL_DOMAIN}`)
+        ? trimmed.slice(0, -(`@${CLOUD_EMAIL_DOMAIN}`).length)
+        : trimmed;
+      return { email: trimmed, displayName };
+    }
+
+    if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(trimmed)) {
+      return {
+        error: "아이디는 영문 소문자·숫자·(._-) 조합 2~32자로 입력해 주세요.",
+      };
+    }
+
+    return {
+      email: `${trimmed}@${CLOUD_EMAIL_DOMAIN}`,
+      displayName: trimmed,
+    };
+  }
+
+  function formatLastSyncTime(isoString) {
+    const ms = parseTimestampMs(isoString);
+    if (!ms) return "마지막 동기화: 대기 중";
+
+    const d = new Date(ms);
+    const now = new Date();
+    const isSameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+
+    if (isSameDay) {
+      return `마지막 동기화: 오늘 ${hh}:${mm}:${ss}`;
+    }
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const da = String(d.getDate()).padStart(2, "0");
+    return `마지막 동기화: ${mo}/${da} ${hh}:${mm}`;
+  }
+
+  function setCloudMessage(el, text, variant = "default") {
+    if (!el) return;
+    if (!text) {
+      el.textContent = "";
+      el.hidden = true;
+      el.classList.remove("is-error", "is-success");
+      return;
+    }
+    el.textContent = text;
+    el.hidden = false;
+    el.classList.toggle("is-error", variant === "error");
+    el.classList.toggle("is-success", variant === "success");
+  }
+
+  function clearCloudMessages() {
+    setCloudMessage(dom.cloudAuthMessage, "");
+    setCloudMessage(dom.cloudSyncedMessage, "");
+  }
+
+  function translateCloudError(error, context = "sync") {
+    const raw = String(
+      (error && (error.message || error.error_description || error.details)) ||
+        "",
+    );
+    const lower = raw.toLowerCase();
+
+    if (!navigator.onLine || lower.includes("failed to fetch") || lower.includes("network")) {
+      return "네트워크 연결이 불안정합니다. 로컬에 안전하게 저장됩니다.";
+    }
+    if (lower.includes("invalid login credentials")) {
+      return "아이디 또는 비밀번호가 올바르지 않습니다.";
+    }
+    if (lower.includes("user already registered")) {
+      return "이미 가입된 아이디입니다. [로그인] 버튼을 눌러주세요.";
+    }
+    if (lower.includes("email not confirmed")) {
+      return "이메일 인증이 켜져 있습니다. Supabase Auth 설정에서 Confirm email을 꺼주세요.";
+    }
+    if (lower.includes("password should be at least")) {
+      return "비밀번호는 6자 이상으로 입력해 주세요.";
+    }
+    if (lower.includes("rate limit") || lower.includes("too many requests")) {
+      return "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+    }
+    if (
+      lower.includes("relation") ||
+      lower.includes("user_progress") ||
+      lower.includes("row-level security") ||
+      lower.includes("permission denied")
+    ) {
+      return "Supabase user_progress 테이블 또는 RLS 권한 설정을 확인해 주세요.";
+    }
+    if (context === "login") return raw || "로그인 중 오류가 발생했습니다.";
+    if (context === "signup") return raw || "회원가입 중 오류가 발생했습니다.";
+    return raw || "클라우드 동기화 중 오류가 발생했습니다.";
+  }
+
+  function renderCloudUI() {
+    const isSignedIn = Boolean(cloud.user);
+    const displayName = isSignedIn ? extractDisplayUsername(cloud.user) : "";
+
+    // Status badge in menu sheet
+    if (dom.cloudSyncBadge && dom.cloudSyncBadgeText) {
+      dom.cloudSyncBadge.classList.remove(
+        "is-synced",
+        "is-syncing",
+        "is-offline",
+        "is-error",
+      );
+      if (!isSignedIn) {
+        dom.cloudSyncBadgeText.textContent = "로컬 저장";
+      } else if (cloud.status === "syncing") {
+        dom.cloudSyncBadge.classList.add("is-syncing");
+        dom.cloudSyncBadgeText.textContent = "동기화 중…";
+      } else if (cloud.status === "offline") {
+        dom.cloudSyncBadge.classList.add("is-offline");
+        dom.cloudSyncBadgeText.textContent = "오프라인 대기";
+      } else if (cloud.status === "error") {
+        dom.cloudSyncBadge.classList.add("is-error");
+        dom.cloudSyncBadgeText.textContent = "동기화 오류";
+      } else {
+        dom.cloudSyncBadge.classList.add("is-synced");
+        dom.cloudSyncBadgeText.textContent = "동기화됨";
+      }
+    }
+
+    // Desktop header trigger button
+    if (dom.cloudMenuBtn) {
+      dom.cloudMenuBtn.classList.toggle("is-signed-in", isSignedIn);
+      dom.cloudMenuBtn.title = isSignedIn
+        ? `클라우드 동기화 (${displayName})`
+        : "클라우드 계정 동기화";
+    }
+    if (dom.cloudHeaderLabel) {
+      dom.cloudHeaderLabel.textContent = isSignedIn ? displayName : "클라우드";
+    }
+    if (dom.cloudHeaderStatusDot) {
+      dom.cloudHeaderStatusDot.hidden = !isSignedIn;
+      dom.cloudHeaderStatusDot.classList.remove(
+        "is-syncing",
+        "is-offline",
+        "is-error",
+      );
+      if (isSignedIn) {
+        if (cloud.status === "syncing") {
+          dom.cloudHeaderStatusDot.classList.add("is-syncing");
+        } else if (cloud.status === "offline") {
+          dom.cloudHeaderStatusDot.classList.add("is-offline");
+        } else if (cloud.status === "error") {
+          dom.cloudHeaderStatusDot.classList.add("is-error");
+        }
+      }
+    }
+
+    // Logged-out vs logged-in panels
+    if (dom.cloudAuthLoggedOut) {
+      dom.cloudAuthLoggedOut.hidden = isSignedIn;
+    }
+    if (dom.cloudAuthLoggedIn) {
+      dom.cloudAuthLoggedIn.hidden = !isSignedIn;
+    }
+
+    if (isSignedIn) {
+      if (dom.cloudAccountName) {
+        dom.cloudAccountName.textContent = displayName;
+      }
+      if (dom.cloudAvatar) {
+        const initial = displayName ? displayName.charAt(0).toUpperCase() : "L";
+        dom.cloudAvatar.textContent = initial;
+      }
+      if (dom.cloudLastSyncText) {
+        dom.cloudLastSyncText.textContent = formatLastSyncTime(
+          cloud.lastSyncedAt || persistedState.updatedAt,
+        );
+      }
+    }
+
+    // Busy/loading button states
+    const authDisabled = cloud.isAuthBusy;
+    if (dom.cloudLoginBtn) {
+      dom.cloudLoginBtn.disabled = authDisabled;
+      dom.cloudLoginBtn.textContent = authDisabled ? "처리 중…" : "로그인";
+    }
+    if (dom.cloudSignupBtn) {
+      dom.cloudSignupBtn.disabled = authDisabled;
+    }
+    if (dom.cloudUsernameInput) {
+      dom.cloudUsernameInput.disabled = authDisabled;
+    }
+    if (dom.cloudPasswordInput) {
+      dom.cloudPasswordInput.disabled = authDisabled;
+    }
+    if (dom.cloudSyncNowBtn) {
+      dom.cloudSyncNowBtn.disabled = cloud.isSyncing || cloud.isAuthBusy;
+      dom.cloudSyncNowBtn.classList.toggle("is-loading", cloud.isSyncing);
+    }
+    if (dom.cloudLogoutBtn) {
+      dom.cloudLogoutBtn.disabled = cloud.isAuthBusy;
+    }
+  }
+
+  function buildCloudProgressJson() {
+    ensureTodayStats();
+    return {
+      version: persistedState.version || 3,
+      theme: persistedState.theme,
+      selectedDeck: persistedState.selectedDeck,
+      hideMeanings: Boolean(persistedState.hideMeanings),
+      updatedAt: persistedState.updatedAt,
+      todayStats: {
+        date: persistedState.todayStats.date,
+        count: persistedState.todayStats.count,
+        byDeck: { ...persistedState.todayStats.byDeck },
+      },
+      words: { ...persistedState.words },
+    };
+  }
+
+  function applyCloudStateToApp(cloudState, cloudUpdatedIso) {
+    const preservedTheme = persistedState.theme;
+    persistedState = cloudState;
+    persistedState.theme = preservedTheme;
+    persistedState.updatedAt = cloudUpdatedIso || cloudState.updatedAt;
+
+    savePersistedState({ markUpdated: false, syncCloud: false });
+
+    session.activeDeck =
+      persistedState.selectedDeck === "all" ||
+      DECK_MAP.has(persistedState.selectedDeck)
+        ? persistedState.selectedDeck
+        : "all";
+
+    if (dom.hideMeaningToggle) {
+      dom.hideMeaningToggle.checked = Boolean(persistedState.hideMeanings);
+    }
+
+    clearSwipeClasses();
+    resetCardFlipInstant();
+    renderDeckSelector();
+    renderStreamFilterOptions();
+    buildSessionQueue();
+    renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
+  }
+
+  async function pushLocalStateToCloud(options = {}) {
+    const { silent = true } = options;
+    if (!cloud.client || !cloud.user) return false;
+
+    if (!navigator.onLine) {
+      cloud.status = "offline";
+      cloud.pendingPush = true;
+      renderCloudUI();
+      return false;
+    }
+
+    cloud.status = "syncing";
+    renderCloudUI();
+
+    const updatedAtIso = persistedState.updatedAt || new Date().toISOString();
+    persistedState.updatedAt = updatedAtIso;
+
+    try {
+      const { error } = await cloud.client.from(CLOUD_PROGRESS_TABLE).upsert(
+        {
+          user_id: cloud.user.id,
+          progress_json: buildCloudProgressJson(),
+          updated_at: updatedAtIso,
+        },
+        { onConflict: "user_id" },
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      savePersistedState({ markUpdated: false, syncCloud: false });
+      cloud.status = "synced";
+      cloud.pendingPush = false;
+      cloud.lastSyncedAt = updatedAtIso;
+      setCloudMessage(dom.cloudSyncedMessage, "");
+      renderCloudUI();
+      return true;
+    } catch (error) {
+      console.error("Cloud push failed:", error);
+      cloud.status = navigator.onLine ? "error" : "offline";
+      cloud.pendingPush = true;
+      const msg = translateCloudError(error, "sync");
+      setCloudMessage(dom.cloudSyncedMessage, msg, "error");
+      if (!silent) {
+        showToast(msg, "error");
+      }
+      renderCloudUI();
+      return false;
+    }
+  }
+
+  function scheduleCloudPush() {
+    if (!cloud.client || !cloud.user) return;
+    cloud.pendingPush = true;
+    if (cloud.debounceTimer) {
+      clearTimeout(cloud.debounceTimer);
+    }
+    cloud.debounceTimer = setTimeout(() => {
+      cloud.debounceTimer = null;
+      flushCloudPush({ silent: true });
+    }, CLOUD_SYNC_DEBOUNCE_MS);
+  }
+
+  async function flushCloudPush(options = {}) {
+    if (cloud.debounceTimer) {
+      clearTimeout(cloud.debounceTimer);
+      cloud.debounceTimer = null;
+    }
+    if (!cloud.client || !cloud.user) return false;
+    return pushLocalStateToCloud(options);
+  }
+
+  async function syncWithCloud(options = {}) {
+    const { silent = false } = options;
+    if (!cloud.client || !cloud.user) return false;
+    if (cloud.isSyncing) return false;
+
+    if (cloud.debounceTimer) {
+      clearTimeout(cloud.debounceTimer);
+      cloud.debounceTimer = null;
+    }
+
+    if (!navigator.onLine) {
+      cloud.status = "offline";
+      setCloudMessage(
+        dom.cloudSyncedMessage,
+        "오프라인 상태입니다. 연결되면 자동으로 동기화됩니다.",
+        "error",
+      );
+      if (!silent) {
+        showToast("오프라인 상태입니다. 로컬 기록으로 계속 학습합니다.", "error");
+      }
+      renderCloudUI();
+      return false;
+    }
+
+    cloud.isSyncing = true;
+    cloud.status = "syncing";
+    setCloudMessage(dom.cloudSyncedMessage, "");
+    renderCloudUI();
+
+    try {
+      const { data: row, error } = await cloud.client
+        .from(CLOUD_PROGRESS_TABLE)
+        .select("user_id, progress_json, updated_at")
+        .eq("user_id", cloud.user.id)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (!row) {
+        // First time syncing this account: upload current local progress to cloud
+        const pushed = await pushLocalStateToCloud({ silent });
+        if (pushed && !silent) {
+          showToast("클라우드에 학습 데이터를 초기 동기화했습니다.", "success");
+        }
+        return pushed;
+      }
+
+      const cloudUpdatedIso =
+        normalizeIsoTimestamp(row.updated_at) ||
+        normalizeIsoTimestamp(row.progress_json && row.progress_json.updatedAt);
+      const cloudState = sanitizeStatePayload(row.progress_json || {}, {
+        fallbackTheme: persistedState.theme,
+        fallbackDeck: session.activeDeck,
+        overrideUpdatedAt: cloudUpdatedIso,
+      });
+
+      const localHasData = hasMeaningfulProgress(persistedState);
+      const cloudHasData = hasMeaningfulProgress(cloudState);
+      const localMs = parseTimestampMs(persistedState.updatedAt);
+      const cloudMs = parseTimestampMs(cloudUpdatedIso || cloudState.updatedAt);
+
+      let direction = "same";
+      if (!localHasData && cloudHasData) {
+        direction = "pull";
+      } else if (localHasData && !cloudHasData) {
+        direction = "push";
+      } else if (cloudMs > localMs) {
+        direction = "pull";
+      } else if (localMs > cloudMs) {
+        direction = "push";
+      }
+
+      if (direction === "pull") {
+        applyCloudStateToApp(cloudState, cloudUpdatedIso);
+        cloud.status = "synced";
+        cloud.pendingPush = false;
+        cloud.lastSyncedAt = new Date().toISOString();
+        if (!silent) {
+          showToast("클라우드의 최신 학습 데이터를 불러왔습니다.", "success");
+        }
+      } else if (direction === "push") {
+        const pushed = await pushLocalStateToCloud({ silent });
+        if (pushed && !silent) {
+          showToast("로컬 최신 학습 데이터를 클라우드에 반영했습니다.", "success");
+        }
+      } else {
+        cloud.status = "synced";
+        cloud.pendingPush = false;
+        cloud.lastSyncedAt = new Date().toISOString();
+        if (!silent) {
+          showToast("이미 최신 상태입니다.", "success");
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Cloud sync failed:", error);
+      cloud.status = navigator.onLine ? "error" : "offline";
+      const msg = translateCloudError(error, "sync");
+      setCloudMessage(dom.cloudSyncedMessage, msg, "error");
+      if (!silent) {
+        showToast(msg, "error");
+      }
+      return false;
+    } finally {
+      cloud.isSyncing = false;
+      cloud.lastPullCheckMs = Date.now();
+      renderCloudUI();
+    }
+  }
+
+  function ensureSupabaseReady() {
+    if (cloud.client) return true;
+    if (
+      window.supabase &&
+      typeof window.supabase.createClient === "function"
+    ) {
+      initSupabaseSync();
+    }
+    return Boolean(cloud.client);
+  }
+
+  function readAndValidateCloudCredentials() {
+    const idResult = normalizeUsernameToEmail(
+      dom.cloudUsernameInput ? dom.cloudUsernameInput.value : "",
+    );
+    if (idResult.error) {
+      setCloudMessage(dom.cloudAuthMessage, idResult.error, "error");
+      if (dom.cloudUsernameInput) dom.cloudUsernameInput.focus();
+      return null;
+    }
+
+    const password = dom.cloudPasswordInput ? dom.cloudPasswordInput.value : "";
+    if (!password || password.length < 6) {
+      setCloudMessage(
+        dom.cloudAuthMessage,
+        "비밀번호는 6자 이상 입력해 주세요.",
+        "error",
+      );
+      if (dom.cloudPasswordInput) dom.cloudPasswordInput.focus();
+      return null;
+    }
+
+    return {
+      email: idResult.email,
+      displayName: idResult.displayName,
+      password,
+    };
+  }
+
+  async function handleCloudLogin(e) {
+    if (e) e.preventDefault();
+    if (cloud.isAuthBusy) return;
+    clearCloudMessages();
+
+    if (!ensureSupabaseReady()) {
+      setCloudMessage(
+        dom.cloudAuthMessage,
+        "클라우드 SDK를 불러오지 못했습니다. 네트워크 연결 후 새로고침해 주세요.",
+        "error",
+      );
+      return;
+    }
+
+    const creds = readAndValidateCloudCredentials();
+    if (!creds) return;
+
+    cloud.isAuthBusy = true;
+    renderCloudUI();
+
+    try {
+      const { data, error } = await cloud.client.auth.signInWithPassword({
+        email: creds.email,
+        password: creds.password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (dom.cloudPasswordInput) {
+        dom.cloudPasswordInput.value = "";
+      }
+
+      if (data && data.user) {
+        cloud.user = data.user;
+        cloud.activeAuthUserId = data.user.id;
+        renderCloudUI();
+        showToast(`${creds.displayName} 계정으로 로그인했습니다.`, "success");
+        await syncWithCloud({ silent: false });
+      }
+    } catch (error) {
+      console.error("Cloud login failed:", error);
+      const msg = translateCloudError(error, "login");
+      setCloudMessage(dom.cloudAuthMessage, msg, "error");
+      showToast(msg, "error");
+    } finally {
+      cloud.isAuthBusy = false;
+      renderCloudUI();
+    }
+  }
+
+  async function handleCloudSignup() {
+    if (cloud.isAuthBusy) return;
+    clearCloudMessages();
+
+    if (!ensureSupabaseReady()) {
+      setCloudMessage(
+        dom.cloudAuthMessage,
+        "클라우드 SDK를 불러오지 못했습니다. 네트워크 연결 후 새로고침해 주세요.",
+        "error",
+      );
+      return;
+    }
+
+    const creds = readAndValidateCloudCredentials();
+    if (!creds) return;
+
+    cloud.isAuthBusy = true;
+    renderCloudUI();
+
+    try {
+      const { data, error } = await cloud.client.auth.signUp({
+        email: creds.email,
+        password: creds.password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      let activeUser = data && data.session ? data.session.user : null;
+
+      // Some Supabase setups require an immediate sign-in call after signUp
+      if (!activeUser) {
+        const signInRes = await cloud.client.auth.signInWithPassword({
+          email: creds.email,
+          password: creds.password,
+        });
+        if (signInRes.error) {
+          throw signInRes.error;
+        }
+        activeUser = signInRes.data ? signInRes.data.user : null;
+      }
+
+      if (dom.cloudPasswordInput) {
+        dom.cloudPasswordInput.value = "";
+      }
+
+      if (activeUser) {
+        cloud.user = activeUser;
+        cloud.activeAuthUserId = activeUser.id;
+        renderCloudUI();
+        showToast(
+          `${creds.displayName} 계정이 생성되어 바로 로그인되었습니다!`,
+          "success",
+        );
+        await syncWithCloud({ silent: false });
+      }
+    } catch (error) {
+      console.error("Cloud signup failed:", error);
+      const msg = translateCloudError(error, "signup");
+      setCloudMessage(dom.cloudAuthMessage, msg, "error");
+      showToast(msg, "error");
+    } finally {
+      cloud.isAuthBusy = false;
+      renderCloudUI();
+    }
+  }
+
+  async function handleCloudLogout() {
+    if (!cloud.client || cloud.isAuthBusy) return;
+    clearCloudMessages();
+
+    cloud.isAuthBusy = true;
+    renderCloudUI();
+
+    try {
+      if (cloud.pendingPush && navigator.onLine) {
+        await flushCloudPush({ silent: true });
+      }
+      if (cloud.debounceTimer) {
+        clearTimeout(cloud.debounceTimer);
+        cloud.debounceTimer = null;
+      }
+
+      const { error } = await cloud.client.auth.signOut();
+      if (error) {
+        throw error;
+      }
+
+      cloud.user = null;
+      cloud.activeAuthUserId = null;
+      cloud.status = "local";
+      cloud.lastSyncedAt = null;
+      cloud.pendingPush = false;
+      showToast("로그아웃했습니다. 로컬 모드로 계속 학습합니다.");
+    } catch (error) {
+      console.error("Cloud logout failed:", error);
+      const msg = translateCloudError(error, "sync");
+      setCloudMessage(dom.cloudSyncedMessage, msg, "error");
+      showToast(msg, "error");
+    } finally {
+      cloud.isAuthBusy = false;
+      renderCloudUI();
+    }
+  }
+
+  function handleAuthSessionUpdate(event, authSession) {
+    const nextUser = authSession && authSession.user ? authSession.user : null;
+
+    if (!nextUser) {
+      if (cloud.debounceTimer) {
+        clearTimeout(cloud.debounceTimer);
+        cloud.debounceTimer = null;
+      }
+      cloud.user = null;
+      cloud.activeAuthUserId = null;
+      cloud.status = "local";
+      cloud.lastSyncedAt = null;
+      cloud.pendingPush = false;
+      renderCloudUI();
+      return;
+    }
+
+    const isNewUserSession = cloud.activeAuthUserId !== nextUser.id;
+    cloud.user = nextUser;
+    cloud.activeAuthUserId = nextUser.id;
+    renderCloudUI();
+
+    if (
+      isNewUserSession &&
+      !cloud.isAuthBusy &&
+      (event === "INITIAL_SESSION" || event === "SIGNED_IN")
+    ) {
+      syncWithCloud({ silent: event === "INITIAL_SESSION" });
+    }
+  }
+
+  function initSupabaseSync() {
+    if (cloud.client) return;
+
+    if (
+      !window.supabase ||
+      typeof window.supabase.createClient !== "function"
+    ) {
+      cloud.sdkReady = false;
+      renderCloudUI();
+      return;
+    }
+
+    try {
+      cloud.client = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY,
+        {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: false,
+          },
+        },
+      );
+      cloud.sdkReady = true;
+
+      cloud.client.auth.onAuthStateChange((event, authSession) => {
+        handleAuthSessionUpdate(event, authSession);
+      });
+
+      cloud.client.auth
+        .getSession()
+        .then(({ data, error }) => {
+          if (error) {
+            console.warn("Supabase session restore error:", error);
+            return;
+          }
+          handleAuthSessionUpdate("INITIAL_SESSION", data ? data.session : null);
+        })
+        .catch((error) => {
+          console.warn("Supabase getSession failed (offline fallback):", error);
+        });
+    } catch (error) {
+      console.error("Supabase initialization failed (offline fallback):", error);
+      cloud.client = null;
+      cloud.sdkReady = false;
+    }
+
+    renderCloudUI();
   }
 
   /* ========================================================================
@@ -2423,6 +3330,9 @@
      ======================================================================== */
   function bindEvents() {
     // Header actions
+    if (dom.cloudMenuBtn) {
+      dom.cloudMenuBtn.addEventListener("click", toggleMobileMenu);
+    }
     dom.themeToggleBtn.addEventListener("click", toggleTheme);
     dom.exportBtn.addEventListener("click", exportBackupJson);
     dom.importBtn.addEventListener("click", () => dom.importFileInput.click());
@@ -2433,6 +3343,54 @@
     if (dom.resetAllDataBtn) {
       dom.resetAllDataBtn.addEventListener("click", resetAllAppData);
     }
+
+    // Cloud account auth & sync controls
+    if (dom.cloudAuthLoggedOut) {
+      dom.cloudAuthLoggedOut.addEventListener("submit", handleCloudLogin);
+    }
+    if (dom.cloudSignupBtn) {
+      dom.cloudSignupBtn.addEventListener("click", handleCloudSignup);
+    }
+    if (dom.cloudSyncNowBtn) {
+      dom.cloudSyncNowBtn.addEventListener("click", () => {
+        syncWithCloud({ silent: false });
+      });
+    }
+    if (dom.cloudLogoutBtn) {
+      dom.cloudLogoutBtn.addEventListener("click", handleCloudLogout);
+    }
+
+    // Network & visibility lifecycle hooks for seamless cross-device sync
+    window.addEventListener("online", () => {
+      if (!cloud.user || !cloud.client) return;
+      if (cloud.pendingPush) {
+        flushCloudPush({ silent: true });
+      } else {
+        syncWithCloud({ silent: true });
+      }
+    });
+    window.addEventListener("offline", () => {
+      if (cloud.user) {
+        cloud.status = "offline";
+        renderCloudUI();
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!cloud.user || !cloud.client) return;
+      if (document.visibilityState === "hidden") {
+        if (cloud.pendingPush) {
+          flushCloudPush({ silent: true });
+        }
+      } else if (document.visibilityState === "visible") {
+        if (
+          !cloud.pendingPush &&
+          !cloud.isSyncing &&
+          Date.now() - cloud.lastPullCheckMs > CLOUD_PULL_COOLDOWN_MS
+        ) {
+          syncWithCloud({ silent: true });
+        }
+      }
+    });
 
     // Dynamic Multi-Deck selector (event delegation)
     if (dom.deckSelector) {
@@ -2546,7 +3504,7 @@
           .querySelectorAll(".archive-item.is-revealed")
           .forEach((item) => item.classList.remove("is-revealed"));
       }
-      savePersistedState();
+      savePersistedState({ markUpdated: false, syncCloud: false });
     });
 
     dom.resetWrongBtn.addEventListener("click", resetAllWrong);
@@ -2599,6 +3557,7 @@
     buildSessionQueue();
     bindEvents();
     renderAll({ animateEnter: true });
+    initSupabaseSync();
   }
 
   if (document.readyState === "loading") {
