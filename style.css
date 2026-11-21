@@ -751,20 +751,6 @@ kbd {
   font-weight: 400;
 }
 
-.cloud-input-with-suffix .cloud-input {
-  padding-right: 4px;
-}
-
-.cloud-input-suffix {
-  padding-right: 10px;
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  flex-shrink: 0;
-  user-select: none;
-}
-
 .cloud-btn-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,4 +1,4 @@
-const CACHE_NAME = "lexicon-cache-v9";
+const CACHE_NAME = "lexicon-cache-v10";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
