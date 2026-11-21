@@ -28,13 +28,14 @@
   const STREAM_BATCH_SIZE = 20;
   const STREAM_REFILL_THRESHOLD = 5;
   const WRONG_REINSERT_OFFSET = 5;
-  const NEW_VERIFY_MIN = 8;
-  const NEW_VERIFY_MAX = 10;
   const HARD_REINSERT_MIN = 15;
   const HARD_REINSERT_MAX = 20;
-  const LV2_DELAY_MIN = 80;
-  const LV2_DELAY_MAX = 200;
-  const LV2_SHRINK_THRESHOLD = 200;
+  const LV1_DELAY_MIN = 40;
+  const LV1_DELAY_MAX = 80;
+  const LV1_SHRINK_THRESHOLD = 80;
+  const LV2_DELAY_MIN = 100;
+  const LV2_DELAY_MAX = 220;
+  const LV2_SHRINK_THRESHOLD = 220;
   const LV2_MAX_PER_BATCH = 5;
   const LEECH_STREAK_THRESHOLD = 3;
   const LEECH_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -512,7 +513,7 @@
 
     let dueStep = null;
     if (
-      level === 2 &&
+      (level === 1 || level === 2) &&
       raw.dueStep !== undefined &&
       raw.dueStep !== null &&
       Number.isFinite(Number(raw.dueStep)) &&
@@ -1046,8 +1047,10 @@
     return Boolean(progress.leechUntil && Date.now() < progress.leechUntil);
   }
 
-  function isLv2Due(word, progress = getWordProgress(word.id)) {
-    if (!progress || progress.level !== 2) return false;
+  function isScheduledReviewDue(word, progress = getWordProgress(word.id)) {
+    if (!progress || (progress.level !== 1 && progress.level !== 2)) {
+      return false;
+    }
     if (progress.dueStep === null || progress.dueStep === undefined) {
       return true;
     }
@@ -1066,6 +1069,19 @@
     return count;
   }
 
+  function computeLv1FutureDelay(remainingUnmastered) {
+    if (remainingUnmastered >= LV1_SHRINK_THRESHOLD) {
+      return (
+        LV1_DELAY_MIN +
+        Math.floor(Math.random() * (LV1_DELAY_MAX - LV1_DELAY_MIN + 1))
+      );
+    }
+    const safeRemaining = Math.max(1, remainingUnmastered);
+    const minDelay = Math.max(4, Math.floor(safeRemaining * 0.25));
+    const maxDelay = Math.max(minDelay, Math.floor(safeRemaining * 0.6));
+    return minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
+  }
+
   function computeLv2FutureDelay(remainingUnmastered) {
     if (remainingUnmastered >= LV2_SHRINK_THRESHOLD) {
       return (
@@ -1074,12 +1090,12 @@
       );
     }
     const safeRemaining = Math.max(1, remainingUnmastered);
-    const minDelay = Math.max(4, Math.floor(safeRemaining * 0.3));
+    const minDelay = Math.max(6, Math.floor(safeRemaining * 0.35));
     const maxDelay = Math.max(minDelay, Math.floor(safeRemaining * 1.0));
     return minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
   }
 
-  function sortLv2ByDueStep(list) {
+  function sortByDueStep(list) {
     return list.sort((a, b) => {
       const pa = getWordProgress(a.id);
       const pb = getWordProgress(b.id);
@@ -1176,39 +1192,42 @@
         .map((w) => w.id);
     }
 
-    // 복습(레벨 1~2) 집중: 도래한 Lv.2 + 일반 Lv.1 우선 → 미래 예약 Lv.2 → Leech 쿨다운 순
+    // 복습(레벨 1~2) 집중: 도래한 Lv.1~2 우선 → 미래 예약 Lv.1~2(빠른 예약순) → Leech 쿨다운 순
     if (session.streamFilter === "review-only") {
-      const dueOrLv1 = [];
-      const pendingLv2 = [];
+      const dueNow = [];
+      const pendingScheduled = [];
       const leechDeferred = [];
 
       for (const word of available) {
         const p = getWordProgress(word.id);
         if (isLeechInCooldown(word.id, p)) {
           leechDeferred.push(word);
-        } else if (p.level === 2 && !isLv2Due(word, p)) {
-          pendingLv2.push(word);
+        } else if (
+          (p.level === 1 || p.level === 2) &&
+          !isScheduledReviewDue(word, p)
+        ) {
+          pendingScheduled.push(word);
         } else {
-          dueOrLv1.push(word);
+          dueNow.push(word);
         }
       }
 
       const ordered = [
-        ...sortReviewCandidates(dueOrLv1, preferExcludeId),
-        ...sortLv2ByDueStep(pendingLv2),
+        ...sortReviewCandidates(dueNow, preferExcludeId),
+        ...sortByDueStep(pendingScheduled),
         ...sortReviewCandidates(leechDeferred, preferExcludeId),
       ];
       return ordered.slice(0, batchSize).map((w) => w.id);
     }
 
-    // 스마트 믹스 v2 (기본):
-    // 1) 도래한 Lv.2 졸업 심사 (배치당 최대 LV2_MAX_PER_BATCH 장 우선 배정, 잔여 복습 슬롯은 일반 Lv.1/오답)
-    // 2) 복습 2 : 신규 1 비율 혼합
-    // 3) 미래 예약 Lv.2(pendingLv2)는 일반 풀 소진 시 후반부 Fallback Tier 1 로 자동 순환
-    // 4) Leech 쿨다운 단어는 모든 일반·예약 풀 소진 시 Fallback Tier 2 로 최하위 배치
+    // 스마트 믹스 v3 (점진적 확장 간격):
+    // - Lv.1 (40~80장 뒤 예약), Lv.2 (100~220장 뒤 예약) 모두 dueStep 도달 전까지 숨김
+    // - 도래한 Lv.2(배치당 최대 5장 우선) + 오답/도래한 Lv.1 복습 2 : 신규 1 비율 혼합
+    // - 일반 풀 소진 시 후반부 Fallback Tier 1(가장 빨리 도래할 예약 Lv.1/Lv.2) -> Tier 2(Leech 쿨다운)
     const dueLv2 = [];
-    const pendingLv2 = [];
-    const regularReview = [];
+    const dueLv1 = [];
+    const immediateWrong = [];
+    const pendingScheduled = [];
     const newTier = [];
     const leechCooldown = [];
 
@@ -1217,25 +1236,33 @@
       if (isLeechInCooldown(word.id, p)) {
         leechCooldown.push(word);
       } else if (p.level === 2) {
-        if (isLv2Due(word, p)) {
+        if (isScheduledReviewDue(word, p)) {
           dueLv2.push(word);
         } else {
-          pendingLv2.push(word);
+          pendingScheduled.push(word);
         }
-      } else if (p.level >= 1 || p.wrongCount >= 1 || hasStudyHistory(p)) {
-        regularReview.push(word);
+      } else if (p.level === 1) {
+        if (isScheduledReviewDue(word, p)) {
+          dueLv1.push(word);
+        } else {
+          pendingScheduled.push(word);
+        }
+      } else if (p.wrongCount >= 1 || hasStudyHistory(p)) {
+        immediateWrong.push(word);
       } else {
         newTier.push(word);
       }
     }
 
-    sortLv2ByDueStep(dueLv2);
-    sortLv2ByDueStep(pendingLv2);
-    sortReviewCandidates(regularReview, preferExcludeId);
+    sortByDueStep(dueLv2);
+    sortByDueStep(dueLv1);
+    sortByDueStep(pendingScheduled);
+    sortReviewCandidates(immediateWrong, preferExcludeId);
     newTier.sort(compareWordsByActiveOrder);
     sortReviewCandidates(leechCooldown, preferExcludeId);
 
-    // Build balanced reviewPool: weave capped dueLv2 gently with regularReview so Lv.2 never clusters
+    // Combine regular due reviews (Lv.0 wrong + due Lv.1) and weave capped dueLv2 gently
+    const regularReview = [...immediateWrong, ...dueLv1];
     const reviewPool = [];
     const primaryLv2Count = Math.min(dueLv2.length, LV2_MAX_PER_BATCH);
     const primaryLv2 = dueLv2.slice(0, primaryLv2Count);
@@ -1253,7 +1280,6 @@
         regIdx += 1;
       }
     }
-    // If regularReview didn't fill the review share, overflow dueLv2 cards can cleanly assist
     if (overflowLv2.length > 0) {
       reviewPool.push(...overflowLv2);
     }
@@ -1280,9 +1306,9 @@
       }
     }
 
-    // End-of-Deck Fallback Tier 1: Pull earliest-due pending Lv.2 cards so deck never stalls
-    if (mixed.length < batchSize && pendingLv2.length > 0) {
-      for (const word of pendingLv2) {
+    // End-of-Deck Fallback Tier 1: Pull earliest-due pending Lv.1/Lv.2 cards so deck never stalls
+    if (mixed.length < batchSize && pendingScheduled.length > 0) {
+      for (const word of pendingScheduled) {
         if (mixed.length >= batchSize) break;
         mixed.push(word.id);
       }
@@ -2301,13 +2327,7 @@
     const progress = getWordProgress(word.id);
     const now = Date.now();
     const prevLevel = progress.level;
-    const prevWrongCount = progress.wrongCount;
     const prevLastStudied = progress.lastStudied;
-    const prevHasHistory = hasStudyHistory(progress);
-    const isFreshNewWord =
-      prevLevel === 0 && prevWrongCount === 0 && !prevHasHistory;
-    const isSmartMix =
-      session.activeTab === "all" && session.streamFilter === "smart-mix";
 
     const currentDeckStep = incrementDeckStep(word.deckKey);
     progress.lastStudied = now;
@@ -2315,7 +2335,6 @@
     let toastMsg = "";
     let toastVariant = "default";
     let triggeredLeechCooldown = false;
-    let shouldReinsertNewVerify = false;
 
     if (rating === 1) {
       // 1: 모름 -> Lv.0 초기화, 연속 오답 추적 (3연속 시 Leech 보류로 무한 루프 차단)
@@ -2381,23 +2400,25 @@
           : `"${word.word}" 마스터 달성! (Lv.3)`;
         toastVariant = "success";
       } else if (prevLevel === 1 && progress.level === 2) {
-        // 규칙 1: Lv.1 -> Lv.2 승급 시 미래 구간(80~200장 뒤, 잔여 200 미만 시 30~100% 동적 축소)에 예약
+        // 2회 통과 (Lv.1 -> Lv.2): 미래 100~220장 뒤 예약 (잔여 220 미만 시 35~100% 동적 축소)
         const remainingUnmastered = getDeckRemainingUnmasteredCount(word.deckKey);
         const futureDelay = computeLv2FutureDelay(remainingUnmastered);
         progress.dueStep = currentDeckStep + futureDelay;
         session.passedInStream.add(word.id);
         toastMsg = `"${word.word}" Lv.2 승급 · 약 ${futureDelay}장 뒤 졸업 심사`;
-      } else if (isFreshNewWord && progress.level === 1 && isSmartMix) {
-        // 규칙 4: 신규(Lv.0) 첫 '알겠음' 시 8~10장 뒤에 1회 단기 검증 우선 배치
-        progress.dueStep = null;
-        shouldReinsertNewVerify = true;
-        toastMsg = `"${word.word}" 첫 통과 (Lv.1/3) · 8~10장 뒤 단기 검증`;
+      } else if (prevLevel === 0 && progress.level === 1) {
+        // 1회 통과 (Lv.0 -> Lv.1): 미래 40~80장 뒤 예약 (잔여 80 미만 시 25~60% 동적 축소)
+        const remainingUnmastered = getDeckRemainingUnmasteredCount(word.deckKey);
+        const futureDelay = computeLv1FutureDelay(remainingUnmastered);
+        progress.dueStep = currentDeckStep + futureDelay;
+        session.passedInStream.add(word.id);
+        toastMsg = wasLeech
+          ? `"${word.word}" 집중 암기 해제 · Lv.1 (약 ${futureDelay}장 뒤 복습)`
+          : `"${word.word}" Lv.1 승급 · 약 ${futureDelay}장 뒤 1차 복습`;
       } else {
         progress.dueStep = null;
         session.passedInStream.add(word.id);
-        toastMsg = wasLeech
-          ? `"${word.word}" 집중 암기 해제! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`
-          : `"${word.word}" 통과! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
+        toastMsg = `"${word.word}" 통과! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
       }
     }
 
@@ -2468,34 +2489,14 @@
             session.currentIndex = idx >= session.queue.length ? 0 : idx;
           }
         } else if (rating === 3) {
-          if (shouldReinsertNewVerify) {
-            // 신규 단어 첫 통과: 8~10장 뒤에 1회 단기 검증 삽입
-            refillStreamIfNeeded(ratedId, true);
-            const verifyOffset =
-              NEW_VERIFY_MIN +
-              Math.floor(
-                Math.random() * (NEW_VERIFY_MAX - NEW_VERIFY_MIN + 1),
-              );
-            const insertIdx = Math.min(
-              idx + verifyOffset,
-              session.queue.length,
-            );
-            session.queue.splice(insertIdx, 0, ratedId);
-            if (session.queue.length > 1 && session.queue[idx] === ratedId) {
-              session.currentIndex = 0;
-            } else {
-              session.currentIndex = idx >= session.queue.length ? 0 : idx;
-            }
-          } else {
-            // 일반 통과 / Lv.2 미래 예약 / Lv.3 졸업: 큐에서 소거 후 잔여 5장 이하 시 20장 배치 보충
-            refillStreamIfNeeded(ratedId, false);
-            session.currentIndex =
-              session.queue.length === 0
+          // Lv.1(40~80장 뒤) / Lv.2(100~220장 뒤) 미래 예약 또는 Lv.3 졸업: 큐에서 소거 후 잔여 5장 이하 시 보충
+          refillStreamIfNeeded(ratedId, false);
+          session.currentIndex =
+            session.queue.length === 0
+              ? 0
+              : idx >= session.queue.length
                 ? 0
-                : idx >= session.queue.length
-                  ? 0
-                  : idx;
-          }
+                : idx;
         }
       }
 
