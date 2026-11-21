@@ -28,8 +28,17 @@
   const STREAM_BATCH_SIZE = 20;
   const STREAM_REFILL_THRESHOLD = 5;
   const WRONG_REINSERT_OFFSET = 5;
+  const NEW_VERIFY_MIN = 8;
+  const NEW_VERIFY_MAX = 10;
   const HARD_REINSERT_MIN = 15;
   const HARD_REINSERT_MAX = 20;
+  const LV2_DELAY_MIN = 80;
+  const LV2_DELAY_MAX = 200;
+  const LV2_SHRINK_THRESHOLD = 200;
+  const LV2_MAX_PER_BATCH = 5;
+  const LEECH_STREAK_THRESHOLD = 3;
+  const LEECH_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const LEECH_MIN_COOLDOWN_MS = 4 * 60 * 60 * 1000;
   const MAX_LEVEL = 3;
   const MOBILE_LAYOUT_QUERY =
     "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
@@ -218,6 +227,7 @@
     // Flashcard Front / Back
     cardDeckBadge: document.getElementById("cardDeckBadge"),
     cardPos: document.getElementById("cardPos"),
+    cardLeechBadge: document.getElementById("cardLeechBadge"),
     cardMasteryMeta: document.getElementById("cardMasteryMeta"),
     cardLevelDots: document.getElementById("cardLevelDots"),
     cardLastStudied: document.getElementById("cardLastStudied"),
@@ -227,6 +237,7 @@
     cardPhonetic: document.getElementById("cardPhonetic"),
     cardBackWord: document.getElementById("cardBackWord"),
     cardBackPos: document.getElementById("cardBackPos"),
+    cardBackLeechBadge: document.getElementById("cardBackLeechBadge"),
     cardWrongBadge: document.getElementById("cardWrongBadge"),
     cardMeaning: document.getElementById("cardMeaning"),
     pronounceExampleBtn: document.getElementById("pronounceExampleBtn"),
@@ -272,6 +283,10 @@
       bookmarked: false,
       level: 0,
       lastStudied: null,
+      dueStep: null,
+      sessionWrongStreak: 0,
+      isLeech: false,
+      leechUntil: null,
     };
   }
 
@@ -287,12 +302,13 @@
 
   function createDefaultState() {
     return {
-      version: 3,
+      version: 4,
       theme: getSystemDefaultTheme(),
       selectedDeck: "all",
       hideMeanings: false,
       randomOrder: false,
       randomSeed: null,
+      deckSteps: {},
       updatedAt: null,
       todayStats: {
         date: getLocalDateKey(),
@@ -413,6 +429,8 @@
       };
     }
 
+    state.deckSteps = sanitizeDeckSteps(raw.deckSteps);
+
     if (
       raw.words &&
       typeof raw.words === "object" &&
@@ -432,6 +450,19 @@
       explicitUpdated || inferLegacyUpdatedAt(state.words, state.todayStats);
 
     return state;
+  }
+
+  function sanitizeDeckSteps(rawSteps) {
+    const clean = {};
+    if (!rawSteps || typeof rawSteps !== "object") return clean;
+    for (const [deckKey, rawVal] of Object.entries(rawSteps)) {
+      if (!deckKey) continue;
+      const num = Number(rawVal);
+      if (Number.isFinite(num) && num > 0) {
+        clean[deckKey] = Math.floor(num);
+      }
+    }
+    return clean;
   }
 
   function sanitizeTodayByDeck(rawByDeck) {
@@ -479,6 +510,33 @@
       lastStudied = Math.floor(Number(raw.lastStudied));
     }
 
+    let dueStep = null;
+    if (
+      level === 2 &&
+      raw.dueStep !== undefined &&
+      raw.dueStep !== null &&
+      Number.isFinite(Number(raw.dueStep)) &&
+      Number(raw.dueStep) >= 0
+    ) {
+      dueStep = Math.floor(Number(raw.dueStep));
+    }
+
+    const sessionWrongStreak = Number.isFinite(Number(raw.sessionWrongStreak))
+      ? Math.max(0, Math.floor(Number(raw.sessionWrongStreak)))
+      : 0;
+    const isLeech = level >= MAX_LEVEL ? false : Boolean(raw.isLeech);
+
+    let leechUntil = null;
+    if (
+      isLeech &&
+      raw.leechUntil !== undefined &&
+      raw.leechUntil !== null &&
+      Number.isFinite(Number(raw.leechUntil)) &&
+      Number(raw.leechUntil) > 0
+    ) {
+      leechUntil = Math.floor(Number(raw.leechUntil));
+    }
+
     let status = VALID_STATUSES.has(raw.status) ? raw.status : "new";
     if (level >= MAX_LEVEL) {
       status = "master";
@@ -486,7 +544,17 @@
       status = level > 0 ? "good" : wrongCount > 0 ? "wrong" : "new";
     }
 
-    return { wrongCount, status, bookmarked, level, lastStudied };
+    return {
+      wrongCount,
+      status,
+      bookmarked,
+      level,
+      lastStudied,
+      dueStep,
+      sessionWrongStreak,
+      isLeech,
+      leechUntil,
+    };
   }
 
   function loadPersistedState() {
@@ -515,6 +583,7 @@
     queue: [],
     currentIndex: 0,
     passedInStream: new Set(),
+    leechDeferredIds: new Set(),
     isFlipped: false,
     isAnimating: false,
     isMobileLayout: false,
@@ -943,6 +1012,84 @@
     ).length;
   }
 
+  function getDeckStep(deckKey) {
+    if (!persistedState.deckSteps || typeof persistedState.deckSteps !== "object") {
+      persistedState.deckSteps = {};
+    }
+    return persistedState.deckSteps[deckKey] || 0;
+  }
+
+  function incrementDeckStep(deckKey) {
+    if (!deckKey) return 0;
+    const nextStep = getDeckStep(deckKey) + 1;
+    persistedState.deckSteps[deckKey] = nextStep;
+    return nextStep;
+  }
+
+  function getEndOfTodayTimestamp(nowMs = Date.now()) {
+    const d = new Date(nowMs);
+    const endOfDay = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + 1,
+      0,
+      0,
+      0,
+      0,
+    ).getTime();
+    return Math.max(endOfDay, nowMs + LEECH_MIN_COOLDOWN_MS);
+  }
+
+  function isLeechInCooldown(wordId, progress = getWordProgress(wordId)) {
+    if (!progress || !progress.isLeech) return false;
+    if (session.leechDeferredIds.has(wordId)) return true;
+    return Boolean(progress.leechUntil && Date.now() < progress.leechUntil);
+  }
+
+  function isLv2Due(word, progress = getWordProgress(word.id)) {
+    if (!progress || progress.level !== 2) return false;
+    if (progress.dueStep === null || progress.dueStep === undefined) {
+      return true;
+    }
+    return getDeckStep(word.deckKey) >= progress.dueStep;
+  }
+
+  function getDeckRemainingUnmasteredCount(deckKey) {
+    const deck = DECK_MAP.get(deckKey);
+    const list = deck ? deck.words : getActiveDeckWords();
+    let count = 0;
+    for (const w of list) {
+      if (getWordProgress(w.id).level < MAX_LEVEL) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function computeLv2FutureDelay(remainingUnmastered) {
+    if (remainingUnmastered >= LV2_SHRINK_THRESHOLD) {
+      return (
+        LV2_DELAY_MIN +
+        Math.floor(Math.random() * (LV2_DELAY_MAX - LV2_DELAY_MIN + 1))
+      );
+    }
+    const safeRemaining = Math.max(1, remainingUnmastered);
+    const minDelay = Math.max(4, Math.floor(safeRemaining * 0.3));
+    const maxDelay = Math.max(minDelay, Math.floor(safeRemaining * 1.0));
+    return minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
+  }
+
+  function sortLv2ByDueStep(list) {
+    return list.sort((a, b) => {
+      const pa = getWordProgress(a.id);
+      const pb = getWordProgress(b.id);
+      const aDue = pa.dueStep ?? 0;
+      const bDue = pb.dueStep ?? 0;
+      if (aDue !== bDue) return aDue - bDue;
+      return compareWordsByActiveOrder(a, b);
+    });
+  }
+
   function sortReviewCandidates(list, preferExcludeId = null) {
     const isRandom = Boolean(persistedState.randomOrder);
     return list.sort((a, b) => {
@@ -951,13 +1098,18 @@
         const bLast = b.id === preferExcludeId ? 1 : 0;
         if (aLast !== bLast) return aLast - bLast;
       }
+      // Cooldown Leeches always sink to lowest priority inside candidate lists
+      const pa = getWordProgress(a.id);
+      const pb = getWordProgress(b.id);
+      const aLeechCool = isLeechInCooldown(a.id, pa) ? 1 : 0;
+      const bLeechCool = isLeechInCooldown(b.id, pb) ? 1 : 0;
+      if (aLeechCool !== bLeechCool) return aLeechCool - bLeechCool;
+
       // Guarantee 1-to-1 sweep without repeats before all eligible cards are seen once
       const aSeen = session.passedInStream.has(a.id) ? 1 : 0;
       const bSeen = session.passedInStream.has(b.id) ? 1 : 0;
       if (aSeen !== bSeen) return aSeen - bSeen;
 
-      const pa = getWordProgress(a.id);
-      const pb = getWordProgress(b.id);
       const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
       const bHasWrong = pb.wrongCount >= 1 ? 1 : 0;
       if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
@@ -1002,7 +1154,7 @@
       session.passedInStream.clear();
     }
 
-    // 오답 집중 공략 탭
+    // 오답 집중 공략 탭 (Leech 쿨다운 단어는 맨 뒤로 후순위 배치)
     if (tab === "wrong-study") {
       return sortReviewCandidates([...available], preferExcludeId)
         .slice(0, batchSize)
@@ -1017,49 +1169,109 @@
         .map((w) => w.id);
     }
 
-    // 복습(레벨 1~2) 집중 또는 북마크 스트림
-    if (
-      session.streamFilter === "review-only" ||
-      session.streamFilter === "bookmarked"
-    ) {
+    // 북마크 스트림
+    if (session.streamFilter === "bookmarked") {
       return sortReviewCandidates([...available], preferExcludeId)
         .slice(0, batchSize)
         .map((w) => w.id);
     }
 
-    // 스마트 믹스 (기본): 복습 필요(level 1~2 / 오답 / 기학습) + 미학습 신규 혼합
-    const reviewTier = sortReviewCandidates(
-      available.filter((word) => {
+    // 복습(레벨 1~2) 집중: 도래한 Lv.2 + 일반 Lv.1 우선 → 미래 예약 Lv.2 → Leech 쿨다운 순
+    if (session.streamFilter === "review-only") {
+      const dueOrLv1 = [];
+      const pendingLv2 = [];
+      const leechDeferred = [];
+
+      for (const word of available) {
         const p = getWordProgress(word.id);
-        return p.level >= 1 || p.wrongCount >= 1 || hasStudyHistory(p);
-      }),
-      preferExcludeId,
-    );
+        if (isLeechInCooldown(word.id, p)) {
+          leechDeferred.push(word);
+        } else if (p.level === 2 && !isLv2Due(word, p)) {
+          pendingLv2.push(word);
+        } else {
+          dueOrLv1.push(word);
+        }
+      }
 
-    const newTier = available
-      .filter((word) => {
-        const p = getWordProgress(word.id);
-        return p.level === 0 && p.wrongCount === 0 && !hasStudyHistory(p);
-      })
-      .sort(compareWordsByActiveOrder);
-
-    if (reviewTier.length === 0) {
-      return newTier.slice(0, batchSize).map((w) => w.id);
-    }
-    if (newTier.length === 0) {
-      return reviewTier.slice(0, batchSize).map((w) => w.id);
+      const ordered = [
+        ...sortReviewCandidates(dueOrLv1, preferExcludeId),
+        ...sortLv2ByDueStep(pendingLv2),
+        ...sortReviewCandidates(leechDeferred, preferExcludeId),
+      ];
+      return ordered.slice(0, batchSize).map((w) => w.id);
     }
 
-    // 복습 단어 2장당 신규 단어 1장 비율로 끊김 없이 혼합
+    // 스마트 믹스 v2 (기본):
+    // 1) 도래한 Lv.2 졸업 심사 (배치당 최대 LV2_MAX_PER_BATCH 장 우선 배정, 잔여 복습 슬롯은 일반 Lv.1/오답)
+    // 2) 복습 2 : 신규 1 비율 혼합
+    // 3) 미래 예약 Lv.2(pendingLv2)는 일반 풀 소진 시 후반부 Fallback Tier 1 로 자동 순환
+    // 4) Leech 쿨다운 단어는 모든 일반·예약 풀 소진 시 Fallback Tier 2 로 최하위 배치
+    const dueLv2 = [];
+    const pendingLv2 = [];
+    const regularReview = [];
+    const newTier = [];
+    const leechCooldown = [];
+
+    for (const word of available) {
+      const p = getWordProgress(word.id);
+      if (isLeechInCooldown(word.id, p)) {
+        leechCooldown.push(word);
+      } else if (p.level === 2) {
+        if (isLv2Due(word, p)) {
+          dueLv2.push(word);
+        } else {
+          pendingLv2.push(word);
+        }
+      } else if (p.level >= 1 || p.wrongCount >= 1 || hasStudyHistory(p)) {
+        regularReview.push(word);
+      } else {
+        newTier.push(word);
+      }
+    }
+
+    sortLv2ByDueStep(dueLv2);
+    sortLv2ByDueStep(pendingLv2);
+    sortReviewCandidates(regularReview, preferExcludeId);
+    newTier.sort(compareWordsByActiveOrder);
+    sortReviewCandidates(leechCooldown, preferExcludeId);
+
+    // Build balanced reviewPool: weave capped dueLv2 gently with regularReview so Lv.2 never clusters
+    const reviewPool = [];
+    const primaryLv2Count = Math.min(dueLv2.length, LV2_MAX_PER_BATCH);
+    const primaryLv2 = dueLv2.slice(0, primaryLv2Count);
+    const overflowLv2 = dueLv2.slice(primaryLv2Count);
+
+    let lv2Idx = 0;
+    let regIdx = 0;
+    while (lv2Idx < primaryLv2.length || regIdx < regularReview.length) {
+      if (lv2Idx < primaryLv2.length) {
+        reviewPool.push(primaryLv2[lv2Idx]);
+        lv2Idx += 1;
+      }
+      for (let k = 0; k < 2 && regIdx < regularReview.length; k += 1) {
+        reviewPool.push(regularReview[regIdx]);
+        regIdx += 1;
+      }
+    }
+    // If regularReview didn't fill the review share, overflow dueLv2 cards can cleanly assist
+    if (overflowLv2.length > 0) {
+      reviewPool.push(...overflowLv2);
+    }
+
+    // Mix reviewPool (2) : newTier (1)
     const mixed = [];
     let r = 0;
     let n = 0;
     while (
       mixed.length < batchSize &&
-      (r < reviewTier.length || n < newTier.length)
+      (r < reviewPool.length || n < newTier.length)
     ) {
-      for (let k = 0; k < 2 && r < reviewTier.length && mixed.length < batchSize; k += 1) {
-        mixed.push(reviewTier[r].id);
+      for (
+        let k = 0;
+        k < 2 && r < reviewPool.length && mixed.length < batchSize;
+        k += 1
+      ) {
+        mixed.push(reviewPool[r].id);
         r += 1;
       }
       if (n < newTier.length && mixed.length < batchSize) {
@@ -1067,6 +1279,23 @@
         n += 1;
       }
     }
+
+    // End-of-Deck Fallback Tier 1: Pull earliest-due pending Lv.2 cards so deck never stalls
+    if (mixed.length < batchSize && pendingLv2.length > 0) {
+      for (const word of pendingLv2) {
+        if (mixed.length >= batchSize) break;
+        mixed.push(word.id);
+      }
+    }
+
+    // End-of-Deck Fallback Tier 2: Pull deferred Leech cards only if nothing else remains
+    if (mixed.length < batchSize && leechCooldown.length > 0) {
+      for (const word of leechCooldown) {
+        if (mixed.length >= batchSize) break;
+        mixed.push(word.id);
+      }
+    }
+
     return mixed;
   }
 
@@ -1850,6 +2079,9 @@
       dom.cardDeckBadge.textContent = word.deckTitle;
     }
     dom.cardPos.textContent = word.pos;
+    if (dom.cardLeechBadge) {
+      dom.cardLeechBadge.hidden = !progress.isLeech;
+    }
     dom.cardWord.textContent = word.word;
     dom.cardPhonetic.textContent = word.phonetic;
 
@@ -1871,6 +2103,9 @@
     // Back face
     dom.cardBackWord.textContent = word.word;
     dom.cardBackPos.textContent = word.pos;
+    if (dom.cardBackLeechBadge) {
+      dom.cardBackLeechBadge.hidden = !progress.isLeech;
+    }
     dom.cardWrongBadge.textContent = `오답 ${progress.wrongCount}회`;
     dom.cardWrongBadge.classList.toggle("has-wrong", progress.wrongCount > 0);
     dom.cardMeaning.textContent = word.meaning;
@@ -1987,6 +2222,13 @@
       wrongPill.textContent = `오답 ${progress.wrongCount}회`;
 
       badgesDiv.append(levelBadge, wrongPill);
+      if (progress.isLeech) {
+        const leechPill = document.createElement("span");
+        leechPill.className = "leech-badge";
+        leechPill.textContent = "집중 암기";
+        leechPill.title = "연속 3회 이상 오답 · 집중 암기 필요 (Leech)";
+        badgesDiv.appendChild(leechPill);
+      }
 
       const btnsDiv = document.createElement("div");
       btnsDiv.className = "archive-item-btns";
@@ -2057,30 +2299,70 @@
 
     session.isAnimating = true;
     const progress = getWordProgress(word.id);
-    progress.lastStudied = Date.now();
+    const now = Date.now();
+    const prevLevel = progress.level;
+    const prevWrongCount = progress.wrongCount;
+    const prevLastStudied = progress.lastStudied;
+    const prevHasHistory = hasStudyHistory(progress);
+    const isFreshNewWord =
+      prevLevel === 0 && prevWrongCount === 0 && !prevHasHistory;
+    const isSmartMix =
+      session.activeTab === "all" && session.streamFilter === "smart-mix";
+
+    const currentDeckStep = incrementDeckStep(word.deckKey);
+    progress.lastStudied = now;
 
     let toastMsg = "";
     let toastVariant = "default";
+    let triggeredLeechCooldown = false;
+    let shouldReinsertNewVerify = false;
 
     if (rating === 1) {
-      // 1: 모름 -> level 0 초기화, wrongCount + 1, 5장 뒤에 즉시 재삽입
+      // 1: 모름 -> Lv.0 초기화, 연속 오답 추적 (3연속 시 Leech 보류로 무한 루프 차단)
       session.passedInStream.delete(word.id);
       progress.level = 0;
+      progress.dueStep = null;
       progress.wrongCount += 1;
       progress.status = "wrong";
-      toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · 5장 뒤 재출제`;
-      toastVariant = "error";
+
+      if (prevLastStudied && now - prevLastStudied > LEECH_WINDOW_MS) {
+        progress.sessionWrongStreak = 0;
+      }
+      progress.sessionWrongStreak = (progress.sessionWrongStreak || 0) + 1;
+
+      if (progress.sessionWrongStreak >= LEECH_STREAK_THRESHOLD) {
+        progress.isLeech = true;
+        progress.leechUntil = getEndOfTodayTimestamp(now);
+        session.leechDeferredIds.add(word.id);
+        triggeredLeechCooldown = true;
+        toastMsg = `"${word.word}" 집중 암기(Leech) 지정 · 잠시 보류 후 다음 세션 출제`;
+        toastVariant = "error";
+      } else {
+        toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · 5장 뒤 재출제`;
+        toastVariant = "error";
+      }
     } else if (rating === 2) {
-      // 2: 애매함 -> level 0 초기화, wrongCount + 1, 15~20장 뒤로 자연스럽게 이동
+      // 2: 애매함 -> 단계적 강등 (Lv.2->1, Lv.1->0, Lv.0->0), 15~20장 뒤 재출제
       session.passedInStream.delete(word.id);
-      progress.level = 0;
+      progress.level = Math.max(0, prevLevel - 1);
+      progress.dueStep = null;
       progress.wrongCount += 1;
       progress.status = "hard";
-      toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 15~20장 뒤 재출제`;
+
+      if (prevLevel > progress.level) {
+        toastMsg = `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · 15~20장 뒤 재출제`;
+      } else {
+        toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 15~20장 뒤 재출제`;
+      }
     } else if (rating === 3) {
-      // 3: 알겠음 -> level +1 (최대 3), 오늘 통과 페이스 +1, 현재 스트림에서 소거
-      session.passedInStream.add(word.id);
-      progress.level = Math.min(MAX_LEVEL, progress.level + 1);
+      // 3: 알겠음 -> Leech 해제, 단계별 승급 + 단기 검증(Lv.0->1) / 미래 예약(Lv.1->2) / 졸업(Lv.2->3)
+      const wasLeech = Boolean(progress.isLeech);
+      progress.sessionWrongStreak = 0;
+      progress.isLeech = false;
+      progress.leechUntil = null;
+      session.leechDeferredIds.delete(word.id);
+
+      progress.level = Math.min(MAX_LEVEL, prevLevel + 1);
       progress.status = progress.level >= MAX_LEVEL ? "master" : "good";
 
       ensureTodayStats();
@@ -2091,10 +2373,31 @@
       }
 
       if (progress.level >= MAX_LEVEL) {
-        toastMsg = `"${word.word}" 마스터 달성! (Lv.3)`;
+        // Lv.2 -> Lv.3 마스터 졸업
+        progress.dueStep = null;
+        session.passedInStream.add(word.id);
+        toastMsg = wasLeech
+          ? `"${word.word}" 집중 암기 해제 · 마스터 달성! (Lv.3)`
+          : `"${word.word}" 마스터 달성! (Lv.3)`;
         toastVariant = "success";
+      } else if (prevLevel === 1 && progress.level === 2) {
+        // 규칙 1: Lv.1 -> Lv.2 승급 시 미래 구간(80~200장 뒤, 잔여 200 미만 시 30~100% 동적 축소)에 예약
+        const remainingUnmastered = getDeckRemainingUnmasteredCount(word.deckKey);
+        const futureDelay = computeLv2FutureDelay(remainingUnmastered);
+        progress.dueStep = currentDeckStep + futureDelay;
+        session.passedInStream.add(word.id);
+        toastMsg = `"${word.word}" Lv.2 승급 · 약 ${futureDelay}장 뒤 졸업 심사`;
+      } else if (isFreshNewWord && progress.level === 1 && isSmartMix) {
+        // 규칙 4: 신규(Lv.0) 첫 '알겠음' 시 8~10장 뒤에 1회 단기 검증 우선 배치
+        progress.dueStep = null;
+        shouldReinsertNewVerify = true;
+        toastMsg = `"${word.word}" 첫 통과 (Lv.1/3) · 8~10장 뒤 단기 검증`;
       } else {
-        toastMsg = `"${word.word}" 통과! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
+        progress.dueStep = null;
+        session.passedInStream.add(word.id);
+        toastMsg = wasLeech
+          ? `"${word.word}" 집중 암기 해제! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`
+          : `"${word.word}" 통과! 숙련도 Lv.${progress.level}/${MAX_LEVEL}`;
       }
     }
 
@@ -2126,20 +2429,31 @@
 
       if (ratedId !== undefined) {
         if (rating === 1) {
-          // 다음 배치가 필요하면 먼저 보충한 뒤 5장 뒤에 재삽입
-          refillStreamIfNeeded(ratedId, true);
-          const insertIdx = Math.min(
-            idx + WRONG_REINSERT_OFFSET,
-            session.queue.length,
-          );
-          session.queue.splice(insertIdx, 0, ratedId);
-          if (session.queue.length > 1 && session.queue[idx] === ratedId) {
-            session.currentIndex = 0;
+          if (triggeredLeechCooldown) {
+            // Leech 쿨다운 진입: 5장 뒤 끼어들기 중단, 다음 배치 필요 시 자동 보충
+            refillStreamIfNeeded(ratedId, false);
+            session.currentIndex =
+              session.queue.length === 0
+                ? 0
+                : idx >= session.queue.length
+                  ? 0
+                  : idx;
           } else {
-            session.currentIndex = idx >= session.queue.length ? 0 : idx;
+            // 일반 모름(1~2회): 다음 배치 필요 시 보충 후 5장 뒤에 즉시 재삽입
+            refillStreamIfNeeded(ratedId, true);
+            const insertIdx = Math.min(
+              idx + WRONG_REINSERT_OFFSET,
+              session.queue.length,
+            );
+            session.queue.splice(insertIdx, 0, ratedId);
+            if (session.queue.length > 1 && session.queue[idx] === ratedId) {
+              session.currentIndex = 0;
+            } else {
+              session.currentIndex = idx >= session.queue.length ? 0 : idx;
+            }
           }
         } else if (rating === 2) {
-          // 다음 배치가 필요하면 먼저 보충한 뒤 15~20장 뒤에 자연스럽게 재삽입
+          // 애매함: 단계적 강등 후 15~20장 뒤에 재삽입
           refillStreamIfNeeded(ratedId, true);
           const hardOffset =
             HARD_REINSERT_MIN +
@@ -2154,14 +2468,34 @@
             session.currentIndex = idx >= session.queue.length ? 0 : idx;
           }
         } else if (rating === 3) {
-          // 남은 카드 5장 이하일 때 다음 20단어 배치 자동 보충 (무한 스마트 스트림)
-          refillStreamIfNeeded(ratedId, false);
-          session.currentIndex =
-            session.queue.length === 0
-              ? 0
-              : idx >= session.queue.length
+          if (shouldReinsertNewVerify) {
+            // 신규 단어 첫 통과: 8~10장 뒤에 1회 단기 검증 삽입
+            refillStreamIfNeeded(ratedId, true);
+            const verifyOffset =
+              NEW_VERIFY_MIN +
+              Math.floor(
+                Math.random() * (NEW_VERIFY_MAX - NEW_VERIFY_MIN + 1),
+              );
+            const insertIdx = Math.min(
+              idx + verifyOffset,
+              session.queue.length,
+            );
+            session.queue.splice(insertIdx, 0, ratedId);
+            if (session.queue.length > 1 && session.queue[idx] === ratedId) {
+              session.currentIndex = 0;
+            } else {
+              session.currentIndex = idx >= session.queue.length ? 0 : idx;
+            }
+          } else {
+            // 일반 통과 / Lv.2 미래 예약 / Lv.3 졸업: 큐에서 소거 후 잔여 5장 이하 시 20장 배치 보충
+            refillStreamIfNeeded(ratedId, false);
+            session.currentIndex =
+              session.queue.length === 0
                 ? 0
-                : idx;
+                : idx >= session.queue.length
+                  ? 0
+                  : idx;
+          }
         }
       }
 
@@ -2220,6 +2554,10 @@
 
     const progress = getWordProgress(wordId);
     progress.wrongCount = 0;
+    progress.sessionWrongStreak = 0;
+    progress.isLeech = false;
+    progress.leechUntil = null;
+    session.leechDeferredIds.delete(wordId);
     if (progress.status === "wrong" || progress.status === "hard") {
       progress.status =
         progress.level >= MAX_LEVEL
@@ -2251,6 +2589,10 @@
     for (const word of wrongWords) {
       const progress = getWordProgress(word.id);
       progress.wrongCount = 0;
+      progress.sessionWrongStreak = 0;
+      progress.isLeech = false;
+      progress.leechUntil = null;
+      session.leechDeferredIds.delete(word.id);
       if (progress.status === "wrong" || progress.status === "hard") {
         progress.status =
           progress.level >= MAX_LEVEL
@@ -2434,6 +2776,8 @@
           }
         }
 
+        nextState.deckSteps = sanitizeDeckSteps(source.deckSteps);
+
         let restoredCount = 0;
         if (!Array.isArray(source.words)) {
           for (const [key, rawEntry] of Object.entries(source.words)) {
@@ -2446,6 +2790,7 @@
 
         persistedState = nextState;
         session.activeDeck = persistedState.selectedDeck;
+        session.leechDeferredIds.clear();
         applyTheme(persistedState.theme);
         rebuildRandomOrderMap();
         syncRandomOrderUI();
@@ -2538,6 +2883,8 @@
     session.streamFilter = "smart-mix";
     session.queue = [];
     session.currentIndex = 0;
+    session.passedInStream.clear();
+    session.leechDeferredIds.clear();
     session.isFlipped = false;
     session.isAnimating = false;
 
@@ -2791,12 +3138,13 @@
   function buildCloudProgressJson() {
     ensureTodayStats();
     return {
-      version: persistedState.version || 3,
+      version: persistedState.version || 4,
       theme: persistedState.theme,
       selectedDeck: persistedState.selectedDeck,
       hideMeanings: Boolean(persistedState.hideMeanings),
       randomOrder: Boolean(persistedState.randomOrder),
       randomSeed: persistedState.randomSeed || null,
+      deckSteps: sanitizeDeckSteps(persistedState.deckSteps),
       updatedAt: persistedState.updatedAt,
       todayStats: {
         date: persistedState.todayStats.date,
@@ -2825,6 +3173,7 @@
       dom.hideMeaningToggle.checked = Boolean(persistedState.hideMeanings);
     }
 
+    session.leechDeferredIds.clear();
     rebuildRandomOrderMap();
     syncRandomOrderUI();
     clearSwipeClasses();
