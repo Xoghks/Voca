@@ -1114,9 +1114,15 @@
   }
 
   function buildSessionQueue(options = {}) {
-    const { preserveCurrentWordId = null, shuffle = false } = options;
+    const {
+      preserveCurrentWordId = null,
+      shuffle = false,
+      preservePassed = false,
+    } = options;
     cancelPendingFlyOut();
-    session.passedInStream.clear();
+    if (!preservePassed) {
+      session.passedInStream.clear();
+    }
 
     let ids = buildNextStreamBatch({
       excludeIds: new Set(),
@@ -1209,7 +1215,7 @@
     resetCardFlipInstant();
 
     if (session.activeTab !== "wrong-archive") {
-      buildSessionQueue();
+      buildSessionQueue({ preservePassed: true });
     }
 
     renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
