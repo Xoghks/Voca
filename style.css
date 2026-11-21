@@ -313,26 +313,22 @@ kbd {
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-/* Dynamic Multi-Deck Selector (Apple Toolbar Pill Tray) */
+/* Dynamic Multi-Deck Selector (Full-Width Wrapping Apple Pill Bar on Desktop) */
 .deck-selector {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-segment);
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
   border: 1px solid var(--border-hairline);
-  max-width: 100%;
+  box-shadow: var(--shadow-xs);
+  width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.deck-selector::-webkit-scrollbar {
-  display: none;
 }
 
 .deck-pill-btn {
@@ -340,36 +336,38 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 13px;
   border-radius: var(--radius-pill);
-  font-size: 0.8rem;
+  font-size: 0.81rem;
   font-weight: 600;
   letter-spacing: -0.015em;
+  background: var(--bg-subtle);
   color: var(--text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .deck-pill-btn:hover {
+  background: var(--bg-subtle-hover);
   color: var(--text-primary);
 }
 
 .deck-pill-btn.is-active {
-  background: var(--bg-segment-active);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-segment);
+  background: var(--accent-blue);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.26);
 }
 
 .deck-pill-count {
-  font-size: 0.7rem;
+  font-size: 0.71rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  opacity: 0.65;
+  opacity: 0.7;
 }
 
 .deck-pill-btn.is-active .deck-pill-count {
-  color: var(--accent-blue);
+  color: rgba(255, 255, 255, 0.9);
   opacity: 1;
 }
 
@@ -2450,8 +2448,8 @@ kbd {
   }
 
   /* Hide desktop-positioned blocks until moved inside #mobileMenu (zero FOUC) */
-  .app-header .deck-selector,
   .app-header .header-actions,
+  .app-container > .deck-selector,
   .app-container > .stats-widget,
   .navigation-bar .filter-wrapper,
   .deck-meta,
@@ -2655,6 +2653,7 @@ kbd {
     background: transparent;
     border: none;
     border-radius: 0;
+    box-shadow: none;
     overflow: visible;
   }
 

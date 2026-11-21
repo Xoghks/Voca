@@ -23,7 +23,7 @@
     <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
-    <link rel="stylesheet" href="style.css?v=14" />
+    <link rel="stylesheet" href="style.css?v=15" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
@@ -101,13 +101,6 @@
             <span class="app-subtitle">Bridge Vocabulary</span>
           </div>
         </div>
-
-        <!-- 동적 단어장(Deck) 선택 UI (app.js 가 window.VOCAB_DECKS 로 자동 렌더링) -->
-        <nav
-          id="deckSelector"
-          class="deck-selector"
-          aria-label="단어장 선택"
-        ></nav>
 
         <div class="header-actions" id="headerActions">
           <button
@@ -555,6 +548,13 @@
     </aside>
 
     <main class="app-container">
+      <!-- 동적 단어장(Deck) 선택 바 (app.js 가 window.VOCAB_DECKS 로 자동 렌더링, 모바일에서는 메뉴 시트로 이동) -->
+      <nav
+        id="deckSelector"
+        class="deck-selector"
+        aria-label="단어장 선택"
+      ></nav>
+
       <!-- 2. 실시간 미니 통계 위젯 -->
       <section
         id="statsWidget"
@@ -1113,15 +1113,15 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=14" defer></script>
-    <script src="./data/toefl.js?v=14" defer></script>
-    <script src="./data/verbs.js?v=14" defer></script>
-    <script src="./data/suneung.js?v=14" defer></script>
+    <script src="./data/toeic.js?v=15" defer></script>
+    <script src="./data/toefl.js?v=15" defer></script>
+    <script src="./data/verbs.js?v=15" defer></script>
+    <script src="./data/suneung.js?v=15" defer></script>
 
     <!-- Supabase JS v2 SDK (클라우드 실시간 동기화 — 오프라인 시에도 안전하게 무시됨) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=14" defer></script>
+    <script src="app.js?v=15" defer></script>
   </body>
 </html>

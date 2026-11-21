@@ -1649,11 +1649,11 @@
       if (dom.headerActions && dom.headerInner && dom.importFileInput) {
         dom.headerInner.insertBefore(dom.headerActions, dom.importFileInput);
       }
-      if (dom.deckSelector && dom.headerInner && dom.headerActions) {
-        dom.headerInner.insertBefore(dom.deckSelector, dom.headerActions);
-      }
       if (dom.statsWidget && dom.appContainer && dom.navigationBar) {
         dom.appContainer.insertBefore(dom.statsWidget, dom.navigationBar);
+      }
+      if (dom.deckSelector && dom.appContainer && dom.statsWidget) {
+        dom.appContainer.insertBefore(dom.deckSelector, dom.statsWidget);
       }
       if (dom.filterWrapper && dom.navigationBar) {
         dom.navigationBar.appendChild(dom.filterWrapper);
