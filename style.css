@@ -1142,6 +1142,7 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 0 4px;
 }
 
@@ -1149,6 +1150,81 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.deck-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Order Mode Toggle Switch (Sequential vs 1:1 Random) */
+.order-toggle-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 11px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.order-toggle-control:hover {
+  background: var(--bg-subtle-hover);
+}
+
+.order-toggle-control.is-random {
+  background: var(--accent-green-soft);
+  border-color: rgba(52, 199, 89, 0.24);
+}
+
+.order-toggle-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.order-toggle-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.order-toggle-control.is-random .order-toggle-title {
+  color: var(--accent-green);
+}
+
+.order-toggle-hint {
+  display: none;
+  font-size: 0.71rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.deck-meta .order-toggle-control .ios-toggle-slider {
+  width: 36px;
+  height: 22px;
+}
+
+.deck-meta .order-toggle-control .ios-toggle-slider::after {
+  width: 18px;
+  height: 18px;
+}
+
+.deck-meta .order-toggle-control .ios-toggle-input:checked + .ios-toggle-slider::after {
+  transform: translateX(14px);
 }
 
 .meta-pill {
@@ -2646,6 +2722,36 @@ kbd {
     color: var(--text-primary);
     box-shadow: var(--shadow-xs);
     flex-shrink: 0;
+  }
+
+  /* Apple Settings Style Sequential / 1:1 Random Order Toggle Row inside Mobile Menu */
+  .mobile-menu .order-toggle-control {
+    width: 100%;
+    height: auto;
+    min-height: 48px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-hairline);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .mobile-menu .order-toggle-control.is-random {
+    border-color: rgba(52, 199, 89, 0.3);
+  }
+
+  .mobile-menu .order-toggle-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+  }
+
+  .mobile-menu .order-toggle-hint {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .mobile-menu .order-toggle-control.is-random .order-toggle-hint {
+    color: var(--accent-green);
   }
 
   /* Apple Control Center Action Tiles (Theme, Export, Import, Reset) inside Menu */

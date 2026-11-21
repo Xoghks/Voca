@@ -40,6 +40,7 @@
   let DECK_MAP = new Map();
   let WORDS = [];
   let WORD_MAP = new Map();
+  let RANDOM_ORDER_MAP = new Map();
 
   function loadDeckRegistry() {
     const rawDecks = Array.isArray(window.VOCAB_DECKS)
@@ -159,6 +160,7 @@
     menuSlotDecks: document.getElementById("menuSlotDecks"),
     menuSlotStats: document.getElementById("menuSlotStats"),
     menuSlotStudyControls: document.getElementById("menuSlotStudyControls"),
+    menuSlotStudyOrder: document.getElementById("menuSlotStudyOrder"),
     menuSlotAppActions: document.getElementById("menuSlotAppActions"),
 
     // Cloud Account & Supabase Sync UI
@@ -200,10 +202,15 @@
     // Study View
     studyView: document.getElementById("studyView"),
     deckMeta: document.querySelector(".deck-meta"),
+    deckMetaRight: document.getElementById("deckMetaRight"),
     deckModeBadge: document.getElementById("deckModeBadge"),
     paceChip: document.getElementById("paceChip"),
     cardProgressText: document.getElementById("cardProgressText"),
+    randomOrderControl: document.getElementById("randomOrderControl"),
+    randomOrderToggle: document.getElementById("randomOrderToggle"),
+    randomOrderHint: document.getElementById("randomOrderHint"),
     shuffleBtn: document.getElementById("shuffleBtn"),
+    shuffleBtnText: document.getElementById("shuffleBtnText"),
     flashcardStage: document.getElementById("flashcardStage"),
     flashcard: document.getElementById("flashcard"),
     flashcardInner: document.querySelector("#flashcard .flashcard-inner"),
@@ -284,6 +291,8 @@
       theme: getSystemDefaultTheme(),
       selectedDeck: "all",
       hideMeanings: false,
+      randomOrder: false,
+      randomSeed: null,
       updatedAt: null,
       todayStats: {
         date: getLocalDateKey(),
@@ -376,6 +385,15 @@
       state.selectedDeck = raw.selectedDeck;
     }
     state.hideMeanings = Boolean(raw.hideMeanings);
+    state.randomOrder = Boolean(raw.randomOrder);
+    if (
+      raw.randomSeed !== undefined &&
+      raw.randomSeed !== null &&
+      Number.isFinite(Number(raw.randomSeed)) &&
+      Number(raw.randomSeed) > 0
+    ) {
+      state.randomSeed = Number(raw.randomSeed) >>> 0;
+    }
 
     const todayKey = getLocalDateKey();
     if (
@@ -496,6 +514,7 @@
     streamFilter: "smart-mix", // 'smart-mix' | 'new-only' | 'review-only' | 'bookmarked'
     queue: [],
     currentIndex: 0,
+    passedInStream: new Set(),
     isFlipped: false,
     isAnimating: false,
     isMobileLayout: false,
@@ -788,8 +807,74 @@
     return deck ? deck.title : session.activeDeck;
   }
 
+  function createRandomSeed() {
+    if (
+      typeof crypto !== "undefined" &&
+      typeof crypto.getRandomValues === "function"
+    ) {
+      const buf = new Uint32Array(1);
+      crypto.getRandomValues(buf);
+      return buf[0] || 1;
+    }
+    return (Math.floor(Math.random() * 0xfffffffe) + 1) >>> 0;
+  }
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Deterministic 1-to-1 bijection over all words (zero duplicates, zero omissions for every deck subset)
+  function rebuildRandomOrderMap() {
+    const nextMap = new Map();
+    if (WORDS.length === 0) {
+      RANDOM_ORDER_MAP = nextMap;
+      return;
+    }
+
+    if (!persistedState.randomSeed) {
+      persistedState.randomSeed = createRandomSeed();
+    }
+
+    const ids = WORDS.map((w) => w.id);
+    const rng = mulberry32(persistedState.randomSeed);
+    for (let i = ids.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    for (let rank = 0; rank < ids.length; rank += 1) {
+      nextMap.set(ids[rank], rank);
+    }
+    RANDOM_ORDER_MAP = nextMap;
+  }
+
+  function getLocalDayBucket(timestamp) {
+    if (!timestamp) return 0;
+    const d = new Date(timestamp);
+    if (Number.isNaN(d.getTime())) return 0;
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  }
+
   function compareWordsByOrder(a, b) {
     return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
+  }
+
+  function compareWordsByActiveOrder(a, b) {
+    if (persistedState.randomOrder) {
+      const ra = RANDOM_ORDER_MAP.has(a.id)
+        ? RANDOM_ORDER_MAP.get(a.id)
+        : (a.orderIndex ?? 0);
+      const rb = RANDOM_ORDER_MAP.has(b.id)
+        ? RANDOM_ORDER_MAP.get(b.id)
+        : (b.orderIndex ?? 0);
+      if (ra !== rb) return ra - rb;
+    }
+    return compareWordsByOrder(a, b);
   }
 
   // 신규 단어: 한 번도 학습하지 않은 단어 (lastStudied === null)
@@ -859,12 +944,18 @@
   }
 
   function sortReviewCandidates(list, preferExcludeId = null) {
+    const isRandom = Boolean(persistedState.randomOrder);
     return list.sort((a, b) => {
       if (preferExcludeId !== null) {
         const aLast = a.id === preferExcludeId ? 1 : 0;
         const bLast = b.id === preferExcludeId ? 1 : 0;
         if (aLast !== bLast) return aLast - bLast;
       }
+      // Guarantee 1-to-1 sweep without repeats before all eligible cards are seen once
+      const aSeen = session.passedInStream.has(a.id) ? 1 : 0;
+      const bSeen = session.passedInStream.has(b.id) ? 1 : 0;
+      if (aSeen !== bSeen) return aSeen - bSeen;
+
       const pa = getWordProgress(a.id);
       const pb = getWordProgress(b.id);
       const aHasWrong = pa.wrongCount >= 1 ? 1 : 0;
@@ -872,6 +963,14 @@
       if (bHasWrong !== aHasWrong) return bHasWrong - aHasWrong;
       if (pb.wrongCount !== pa.wrongCount) return pb.wrongCount - pa.wrongCount;
       if (pa.level !== pb.level) return pa.level - pb.level;
+
+      if (isRandom) {
+        const aDay = getLocalDayBucket(pa.lastStudied);
+        const bDay = getLocalDayBucket(pb.lastStudied);
+        if (aDay !== bDay) return aDay - bDay;
+        return compareWordsByActiveOrder(a, b);
+      }
+
       const aTime = pa.lastStudied ?? 0;
       const bTime = pb.lastStudied ?? 0;
       if (aTime !== bTime) return aTime - bTime;
@@ -895,6 +994,14 @@
 
     if (available.length === 0) return [];
 
+    // If every available eligible card has been passed once in this sweep, start a clean next pass
+    if (
+      session.passedInStream.size > 0 &&
+      available.every((w) => session.passedInStream.has(w.id))
+    ) {
+      session.passedInStream.clear();
+    }
+
     // 오답 집중 공략 탭
     if (tab === "wrong-study") {
       return sortReviewCandidates([...available], preferExcludeId)
@@ -902,10 +1009,10 @@
         .map((w) => w.id);
     }
 
-    // 신규 단어 집중: 미학습 단어 순서대로
+    // 신규 단어 집중: 미학습 단어 1:1 순서 (등록 순서 또는 결정적 랜덤 순서)
     if (session.streamFilter === "new-only") {
       return [...available]
-        .sort(compareWordsByOrder)
+        .sort(compareWordsByActiveOrder)
         .slice(0, batchSize)
         .map((w) => w.id);
     }
@@ -934,7 +1041,7 @@
         const p = getWordProgress(word.id);
         return p.level === 0 && p.wrongCount === 0 && !hasStudyHistory(p);
       })
-      .sort(compareWordsByOrder);
+      .sort(compareWordsByActiveOrder);
 
     if (reviewTier.length === 0) {
       return newTier.slice(0, batchSize).map((w) => w.id);
@@ -1009,6 +1116,7 @@
   function buildSessionQueue(options = {}) {
     const { preserveCurrentWordId = null, shuffle = false } = options;
     cancelPendingFlyOut();
+    session.passedInStream.clear();
 
     let ids = buildNextStreamBatch({
       excludeIds: new Set(),
@@ -1061,7 +1169,87 @@
     return WORD_MAP.get(wordId) || null;
   }
 
+  function syncRandomOrderUI() {
+    const isRandom = Boolean(persistedState.randomOrder);
+    if (dom.randomOrderToggle) {
+      dom.randomOrderToggle.checked = isRandom;
+    }
+    if (dom.randomOrderControl) {
+      dom.randomOrderControl.classList.toggle("is-random", isRandom);
+    }
+    if (dom.randomOrderHint) {
+      dom.randomOrderHint.textContent = isRandom
+        ? "테마 전체 1:1 무작위 순서"
+        : "등록 순서대로";
+    }
+    if (dom.shuffleBtnText) {
+      dom.shuffleBtnText.textContent = isRandom ? "다시 섞기" : "셔플";
+    }
+    if (dom.shuffleBtn) {
+      dom.shuffleBtn.title = isRandom
+        ? "테마 전체를 새로운 1:1 랜덤 순서로 다시 섞기"
+        : "현재 대기 카드 순서 섞기";
+    }
+  }
+
+  function toggleRandomOrder(enabled) {
+    const nextRandom = Boolean(enabled);
+    persistedState.randomOrder = nextRandom;
+
+    if (nextRandom) {
+      if (!persistedState.randomSeed || RANDOM_ORDER_MAP.size !== WORDS.length) {
+        persistedState.randomSeed = createRandomSeed();
+        rebuildRandomOrderMap();
+      }
+    }
+
+    savePersistedState({ markUpdated: false, syncCloud: false });
+    syncRandomOrderUI();
+    clearSwipeClasses();
+    resetCardFlipInstant();
+
+    if (session.activeTab !== "wrong-archive") {
+      buildSessionQueue();
+    }
+
+    renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
+    showToast(
+      nextRandom
+        ? "랜덤 순서 모드로 전환했습니다. (1:1 무작위)"
+        : "등록 순서대로 모드로 전환했습니다.",
+    );
+  }
+
   function shuffleCurrentSession() {
+    if (persistedState.randomOrder) {
+      const totalEligible = getTotalEligibleCount();
+      if (totalEligible <= 1) {
+        showToast("셔플할 카드가 충분하지 않습니다.");
+        return;
+      }
+
+      const prevFirstId = session.queue[0] || null;
+      let attempts = 0;
+      do {
+        persistedState.randomSeed = createRandomSeed();
+        rebuildRandomOrderMap();
+        buildSessionQueue();
+        attempts += 1;
+      } while (
+        attempts < 5 &&
+        prevFirstId !== null &&
+        session.queue.length > 1 &&
+        session.queue[0] === prevFirstId
+      );
+
+      savePersistedState({ markUpdated: false, syncCloud: false });
+      resetCardFlipInstant();
+      renderCurrentCard({ animateEnter: true });
+      closeMobileMenu();
+      showToast("테마 전체를 새로운 랜덤 순서로 섞었습니다.");
+      return;
+    }
+
     if (session.queue.length <= 1) {
       showToast("셔플할 카드가 충분하지 않습니다.");
       return;
@@ -1206,6 +1394,9 @@
       if (dom.shuffleBtn && dom.menuSlotStudyControls) {
         dom.menuSlotStudyControls.appendChild(dom.shuffleBtn);
       }
+      if (dom.randomOrderControl && dom.menuSlotStudyOrder) {
+        dom.menuSlotStudyOrder.appendChild(dom.randomOrderControl);
+      }
       if (dom.headerActions && dom.menuSlotAppActions) {
         dom.menuSlotAppActions.appendChild(dom.headerActions);
       }
@@ -1232,8 +1423,13 @@
       if (dom.filterWrapper && dom.navigationBar) {
         dom.navigationBar.appendChild(dom.filterWrapper);
       }
-      if (dom.shuffleBtn && dom.deckMeta) {
-        dom.deckMeta.appendChild(dom.shuffleBtn);
+      if (dom.deckMetaRight) {
+        if (dom.randomOrderControl) {
+          dom.deckMetaRight.appendChild(dom.randomOrderControl);
+        }
+        if (dom.shuffleBtn) {
+          dom.deckMetaRight.appendChild(dom.shuffleBtn);
+        }
       }
     }
 
@@ -1350,7 +1546,8 @@
     const todayPassed = getTodayCountForDeck(session.activeDeck);
     const isDeckFiltered = session.activeDeck !== "all";
     const isModeFiltered = session.streamFilter !== "smart-mix";
-    const isFiltered = isDeckFiltered || isModeFiltered;
+    const isRandomOrder = Boolean(persistedState.randomOrder);
+    const isFiltered = isDeckFiltered || isModeFiltered || isRandomOrder;
 
     dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
     dom.mobileStatusPill.classList.toggle(
@@ -1369,6 +1566,9 @@
         parts.push("복습");
       } else if (session.streamFilter === "bookmarked") {
         parts.push("★ 북마크");
+      }
+      if (isRandomOrder) {
+        parts.push("랜덤");
       }
 
       if (parts.length > 0) {
@@ -1519,10 +1719,15 @@
     const modeLabel = isWrongMode
       ? "오답 집중 공략"
       : getStreamFilterLabel(session.streamFilter);
-    dom.deckModeBadge.textContent =
-      session.activeDeck === "all"
-        ? modeLabel
-        : `${getActiveDeckTitle()} · ${modeLabel}`;
+    const badgeParts = [];
+    if (session.activeDeck !== "all") {
+      badgeParts.push(getActiveDeckTitle());
+    }
+    badgeParts.push(modeLabel);
+    if (persistedState.randomOrder) {
+      badgeParts.push("랜덤");
+    }
+    dom.deckModeBadge.textContent = badgeParts.join(" · ");
     dom.deckModeBadge.classList.toggle("is-wrong-mode", isWrongMode);
 
     const word = getCurrentWord();
@@ -1853,6 +2058,7 @@
 
     if (rating === 1) {
       // 1: 모름 -> level 0 초기화, wrongCount + 1, 5장 뒤에 즉시 재삽입
+      session.passedInStream.delete(word.id);
       progress.level = 0;
       progress.wrongCount += 1;
       progress.status = "wrong";
@@ -1860,12 +2066,14 @@
       toastVariant = "error";
     } else if (rating === 2) {
       // 2: 애매함 -> level 0 초기화, wrongCount + 1, 15~20장 뒤로 자연스럽게 이동
+      session.passedInStream.delete(word.id);
       progress.level = 0;
       progress.wrongCount += 1;
       progress.status = "hard";
       toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 15~20장 뒤 재출제`;
     } else if (rating === 3) {
       // 3: 알겠음 -> level +1 (최대 3), 오늘 통과 페이스 +1, 현재 스트림에서 소거
+      session.passedInStream.add(word.id);
       progress.level = Math.min(MAX_LEVEL, progress.level + 1);
       progress.status = progress.level >= MAX_LEVEL ? "master" : "good";
 
@@ -2182,6 +2390,20 @@
           nextState.selectedDeck = session.activeDeck;
         }
         nextState.hideMeanings = Boolean(source.hideMeanings);
+        nextState.randomOrder =
+          typeof source.randomOrder === "boolean"
+            ? source.randomOrder
+            : Boolean(persistedState.randomOrder);
+        if (
+          source.randomSeed !== undefined &&
+          source.randomSeed !== null &&
+          Number.isFinite(Number(source.randomSeed)) &&
+          Number(source.randomSeed) > 0
+        ) {
+          nextState.randomSeed = Number(source.randomSeed) >>> 0;
+        } else {
+          nextState.randomSeed = persistedState.randomSeed;
+        }
 
         if (
           source.todayStats &&
@@ -2219,6 +2441,8 @@
         persistedState = nextState;
         session.activeDeck = persistedState.selectedDeck;
         applyTheme(persistedState.theme);
+        rebuildRandomOrderMap();
+        syncRandomOrderUI();
         savePersistedState({
           markUpdated: true,
           syncCloud: true,
@@ -2320,6 +2544,8 @@
 
     clearSwipeClasses();
     resetCardFlipInstant();
+    rebuildRandomOrderMap();
+    syncRandomOrderUI();
     applyTheme(persistedState.theme);
     renderDeckSelector();
     renderStreamFilterOptions();
@@ -2563,6 +2789,8 @@
       theme: persistedState.theme,
       selectedDeck: persistedState.selectedDeck,
       hideMeanings: Boolean(persistedState.hideMeanings),
+      randomOrder: Boolean(persistedState.randomOrder),
+      randomSeed: persistedState.randomSeed || null,
       updatedAt: persistedState.updatedAt,
       todayStats: {
         date: persistedState.todayStats.date,
@@ -2591,6 +2819,8 @@
       dom.hideMeaningToggle.checked = Boolean(persistedState.hideMeanings);
     }
 
+    rebuildRandomOrderMap();
+    syncRandomOrderUI();
     clearSwipeClasses();
     resetCardFlipInstant();
     renderDeckSelector();
@@ -3433,6 +3663,11 @@
     );
 
     // Deck controls
+    if (dom.randomOrderToggle) {
+      dom.randomOrderToggle.addEventListener("change", (e) => {
+        toggleRandomOrder(e.target.checked);
+      });
+    }
     dom.shuffleBtn.addEventListener("click", shuffleCurrentSession);
     if (dom.restartSessionBtn) {
       dom.restartSessionBtn.addEventListener("click", startMasteredFreeReview);
@@ -3548,6 +3783,8 @@
         : "all";
 
     applyTheme(persistedState.theme);
+    rebuildRandomOrderMap();
+    syncRandomOrderUI();
     syncShortcutHintBar();
     renderDeckSelector();
     renderStreamFilterOptions();

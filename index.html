@@ -23,7 +23,7 @@
     <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
-    <link rel="stylesheet" href="style.css?v=10" />
+    <link rel="stylesheet" href="style.css?v=11" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
@@ -410,6 +410,7 @@
         <div class="menu-section menu-section-mobile-only">
           <span class="menu-section-label">학습 필터 · 덱</span>
           <div id="menuSlotStudyControls" class="menu-slot menu-slot-controls"></div>
+          <div id="menuSlotStudyOrder" class="menu-slot"></div>
         </div>
 
         <div id="cloudSyncSection" class="menu-section menu-section-cloud">
@@ -688,32 +689,53 @@
             >
             <span id="cardProgressText" class="meta-counter">대기 20단어</span>
           </div>
-          <button
-            type="button"
-            id="shuffleBtn"
-            class="ghost-btn"
-            title="카드 순서 섞기"
-            aria-label="카드 순서 섞기"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="15"
-              height="15"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.9"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+          <div id="deckMetaRight" class="deck-meta-right">
+            <label
+              id="randomOrderControl"
+              class="order-toggle-control"
+              title="OFF: 등록 순서대로 · ON: 테마 전체 1:1 무작위 순서"
             >
-              <polyline points="16 3 21 3 21 8" />
-              <line x1="4" y1="20" x2="21" y2="3" />
-              <polyline points="21 16 21 21 16 21" />
-              <line x1="15" y1="15" x2="21" y2="21" />
-              <line x1="4" y1="4" x2="9" y2="9" />
-            </svg>
-            <span>셔플</span>
-          </button>
+              <span class="order-toggle-text">
+                <span class="order-toggle-title">랜덤 순서</span>
+                <span id="randomOrderHint" class="order-toggle-hint"
+                  >등록 순서대로</span
+                >
+              </span>
+              <input
+                type="checkbox"
+                id="randomOrderToggle"
+                class="ios-toggle-input"
+                aria-label="단어 출제 순서 랜덤 전환"
+              />
+              <span class="ios-toggle-slider" aria-hidden="true"></span>
+            </label>
+            <button
+              type="button"
+              id="shuffleBtn"
+              class="ghost-btn"
+              title="카드 순서 섞기"
+              aria-label="카드 순서 섞기"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="15"
+                height="15"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.9"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="16 3 21 3 21 8" />
+                <line x1="4" y1="20" x2="21" y2="3" />
+                <polyline points="21 16 21 21 16 21" />
+                <line x1="15" y1="15" x2="21" y2="21" />
+                <line x1="4" y1="4" x2="9" y2="9" />
+              </svg>
+              <span id="shuffleBtnText">셔플</span>
+            </button>
+          </div>
         </div>
 
         <!-- 플래시카드 영역 -->
@@ -1077,13 +1099,13 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=10" defer></script>
-    <script src="./data/toefl.js?v=10" defer></script>
+    <script src="./data/toeic.js?v=11" defer></script>
+    <script src="./data/toefl.js?v=11" defer></script>
 
     <!-- Supabase JS v2 SDK (클라우드 실시간 동기화 — 오프라인 시에도 안전하게 무시됨) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=10" defer></script>
+    <script src="app.js?v=11" defer></script>
   </body>
 </html>
