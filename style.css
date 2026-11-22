@@ -568,9 +568,44 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 13px 16px 10px;
   border-bottom: 1px solid var(--border-hairline);
   flex-shrink: 0;
+}
+
+.mobile-menu-header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobile-menu-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 9px 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    transform 120ms var(--ease-apple);
+}
+
+.mobile-menu-back:hover {
+  background: rgba(0, 122, 255, 0.18);
+}
+
+.mobile-menu-back:active {
+  transform: scale(0.96);
 }
 
 .mobile-menu-title {
@@ -578,6 +613,99 @@ kbd {
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact Cloud Sync Entry Row inside Mobile Main Menu */
+.cloud-entry-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-hairline);
+  box-shadow: var(--shadow-xs);
+  text-align: left;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    transform 120ms var(--ease-apple);
+}
+
+.cloud-entry-btn:hover {
+  border-color: var(--border-medium);
+}
+
+.cloud-entry-btn:active {
+  transform: scale(0.985);
+}
+
+.cloud-entry-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cloud-entry-btn.is-signed-in .cloud-entry-icon {
+  background: var(--accent-green-soft);
+  color: var(--accent-green);
+}
+
+.cloud-entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cloud-entry-title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.cloud-entry-sub {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-entry-btn .cloud-sync-badge {
+  flex-shrink: 0;
+}
+
+.cloud-entry-chevron {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+@keyframes menuSubpageIn {
+  from {
+    opacity: 0;
+    transform: translate3d(10px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .mobile-menu-close {
@@ -2446,15 +2574,18 @@ kbd {
   left: 50%;
   bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   z-index: 200;
-  padding: 11px 20px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 18px;
   border-radius: var(--radius-pill);
   background: rgba(29, 29, 31, 0.92);
   color: #ffffff;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
   box-shadow: var(--shadow-toast);
   pointer-events: none;
   opacity: 0;
@@ -2463,7 +2594,9 @@ kbd {
     opacity 0.26s var(--ease-apple),
     transform 0.34s var(--ease-apple);
   will-change: transform, opacity;
-  max-width: calc(100vw - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-align: center;
 }
 
@@ -2726,12 +2859,36 @@ kbd {
     transform-origin: top center;
   }
 
+  .mobile-menu-header {
+    padding: 11px 14px 9px;
+  }
+
+  /* 모바일은 상단 헤더의 '닫기' 버튼 하나만 유지해 중복 닫기 제거 */
+  .mobile-menu-close {
+    display: none;
+  }
+
   .mobile-menu-body {
     padding: 12px 14px 14px;
   }
 
   .menu-section-mobile-only {
     display: flex;
+  }
+
+  /* 모바일 메뉴 2단계 뷰: 기본은 컴팩트 진입 버튼, 클릭 시 클라우드 전용 하위 페이지로 이동 */
+  .mobile-menu:not(.is-cloud-page) .menu-section-cloud {
+    display: none;
+  }
+
+  .mobile-menu.is-cloud-page .menu-section-mobile-only,
+  .mobile-menu.is-cloud-page .menu-gesture-tip {
+    display: none;
+  }
+
+  .mobile-menu.is-cloud-page .menu-section-cloud {
+    display: flex;
+    animation: menuSubpageIn 0.22s var(--ease-apple);
   }
 
   .mobile-menu .cloud-header-btn {
@@ -3240,8 +3397,9 @@ kbd {
     top: calc(env(safe-area-inset-top, 0px) + 8px);
     bottom: auto;
     z-index: 260;
-    padding: 9px 16px;
-    font-size: 0.8rem;
+    max-width: calc(100vw - 20px);
+    padding: 8px 14px;
+    font-size: 0.78rem;
     transform: translate3d(-50%, -14px, 0) scale(0.94);
   }
 

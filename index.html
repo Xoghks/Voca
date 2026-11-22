@@ -23,7 +23,7 @@
     <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
-    <link rel="stylesheet" href="style.css?v=18" />
+    <link rel="stylesheet" href="style.css?v=19" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
@@ -363,9 +363,33 @@
       aria-hidden="true"
     >
       <div class="mobile-menu-header">
-        <span id="mobileMenuTitle" class="mobile-menu-title"
-          >학습 현황 · 설정</span
-        >
+        <div class="mobile-menu-header-left">
+          <button
+            type="button"
+            id="mobileMenuBackBtn"
+            class="mobile-menu-back"
+            aria-label="이전 메뉴로 돌아가기"
+            hidden
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            <span>뒤로</span>
+          </button>
+          <span id="mobileMenuTitle" class="mobile-menu-title"
+            >학습 현황 · 설정</span
+          >
+        </div>
         <button
           type="button"
           id="mobileMenuCloseBtn"
@@ -406,9 +430,61 @@
           <div id="menuSlotStudyOrder" class="menu-slot"></div>
         </div>
 
+        <div
+          id="mobileCloudEntrySection"
+          class="menu-section menu-section-mobile-only"
+        >
+          <span class="menu-section-label">계정 · 동기화</span>
+          <button
+            type="button"
+            id="mobileCloudEntryBtn"
+            class="cloud-entry-btn"
+            aria-label="클라우드 계정 동기화 열기"
+          >
+            <span class="cloud-entry-icon" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                width="17"
+                height="17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.9"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+              </svg>
+            </span>
+            <span class="cloud-entry-text">
+              <span class="cloud-entry-title">클라우드 동기화</span>
+              <span id="mobileCloudEntrySub" class="cloud-entry-sub"
+                >로그인 · 기기 간 동기화</span
+              >
+            </span>
+            <span id="mobileCloudEntryBadge" class="cloud-sync-badge">
+              <span class="cloud-badge-dot" aria-hidden="true"></span>
+              <span id="mobileCloudEntryBadgeText">로컬 저장</span>
+            </span>
+            <svg
+              class="cloud-entry-chevron"
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        </div>
+
         <div id="cloudSyncSection" class="menu-section menu-section-cloud">
           <div class="menu-section-head">
-            <span class="menu-section-label">클라우드 계정 동기화</span>
+            <span class="menu-section-label">동기화 상태</span>
             <span id="cloudSyncBadge" class="cloud-sync-badge">
               <span class="cloud-badge-dot" aria-hidden="true"></span>
               <span id="cloudSyncBadgeText">로컬 저장</span>
@@ -1144,15 +1220,15 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=18" defer></script>
-    <script src="./data/toefl.js?v=18" defer></script>
-    <script src="./data/verbs.js?v=18" defer></script>
-    <script src="./data/suneung.js?v=18" defer></script>
+    <script src="./data/toeic.js?v=19" defer></script>
+    <script src="./data/toefl.js?v=19" defer></script>
+    <script src="./data/verbs.js?v=19" defer></script>
+    <script src="./data/suneung.js?v=19" defer></script>
 
     <!-- Supabase JS v2 SDK (클라우드 실시간 동기화 — 오프라인 시에도 안전하게 무시됨) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=18" defer></script>
+    <script src="app.js?v=19" defer></script>
   </body>
 </html>

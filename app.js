@@ -165,8 +165,16 @@
     mobileMenuDot: document.getElementById("mobileMenuDot"),
     mobileMenuBackdrop: document.getElementById("mobileMenuBackdrop"),
     mobileMenu: document.getElementById("mobileMenu"),
+    mobileMenuBody: document.querySelector("#mobileMenu .mobile-menu-body"),
+    mobileMenuBackBtn: document.getElementById("mobileMenuBackBtn"),
     mobileMenuTitle: document.getElementById("mobileMenuTitle"),
     mobileMenuCloseBtn: document.getElementById("mobileMenuCloseBtn"),
+    mobileCloudEntryBtn: document.getElementById("mobileCloudEntryBtn"),
+    mobileCloudEntrySub: document.getElementById("mobileCloudEntrySub"),
+    mobileCloudEntryBadge: document.getElementById("mobileCloudEntryBadge"),
+    mobileCloudEntryBadgeText: document.getElementById(
+      "mobileCloudEntryBadgeText",
+    ),
     menuSlotDecks: document.getElementById("menuSlotDecks"),
     menuSlotStats: document.getElementById("menuSlotStats"),
     menuSlotStudyControls: document.getElementById("menuSlotStudyControls"),
@@ -583,6 +591,7 @@
     isAnimating: false,
     isMobileLayout: false,
     isMenuOpen: false,
+    menuView: "main", // 'main' | 'cloud' (모바일 메뉴 하위 페이지)
     flyOutTimer: null,
     menuCloseTimer: null,
     toastTimer: null,
@@ -1519,19 +1528,41 @@
      ======================================================================== */
   function syncMenuHeaderTitle() {
     if (!dom.mobileMenuTitle) return;
-    dom.mobileMenuTitle.textContent = session.isMobileLayout
-      ? "학습 현황 · 설정"
-      : "클라우드 계정 동기화";
+    if (!session.isMobileLayout) {
+      dom.mobileMenuTitle.textContent = "클라우드 계정 동기화";
+      return;
+    }
+    dom.mobileMenuTitle.textContent =
+      session.menuView === "cloud"
+        ? "클라우드 계정 동기화"
+        : "학습 현황 · 설정";
   }
 
-  function openMobileMenu() {
+  function setMobileMenuView(nextView = "main") {
+    const isCloudPage = Boolean(session.isMobileLayout && nextView === "cloud");
+    session.menuView = isCloudPage ? "cloud" : "main";
+
+    if (dom.mobileMenu) {
+      dom.mobileMenu.classList.toggle("is-cloud-page", isCloudPage);
+    }
+    if (dom.mobileMenuBackBtn) {
+      dom.mobileMenuBackBtn.hidden = !isCloudPage;
+    }
+    if (dom.mobileMenuBody) {
+      dom.mobileMenuBody.scrollTop = 0;
+    }
+    syncMenuHeaderTitle();
+  }
+
+  function openMobileMenu(options = {}) {
     if (!dom.mobileMenu) return;
     if (session.menuCloseTimer) {
       clearTimeout(session.menuCloseTimer);
       session.menuCloseTimer = null;
     }
 
-    syncMenuHeaderTitle();
+    const initialView = options && options.view === "cloud" ? "cloud" : "main";
+    setMobileMenuView(initialView);
     session.isMenuOpen = true;
     dom.mobileMenu.hidden = false;
     if (dom.mobileMenuBackdrop) {
@@ -1598,6 +1629,7 @@
       if (dom.mobileMenuBackdrop) {
         dom.mobileMenuBackdrop.hidden = true;
       }
+      setMobileMenuView("main");
       return;
     }
 
@@ -1607,6 +1639,7 @@
         if (dom.mobileMenuBackdrop) {
           dom.mobileMenuBackdrop.hidden = true;
         }
+        setMobileMenuView("main");
       }
       session.menuCloseTimer = null;
     }, 340);
@@ -1622,7 +1655,11 @@
 
   function syncResponsiveMenuPlacement(isMobile) {
     session.isMobileLayout = Boolean(isMobile);
-    syncMenuHeaderTitle();
+    if (!session.isMobileLayout) {
+      setMobileMenuView("main");
+    } else {
+      syncMenuHeaderTitle();
+    }
 
     if (session.isMobileLayout) {
       if (dom.deckSelector && dom.menuSlotDecks) {
@@ -2400,11 +2437,11 @@
       progress.isLeech = isFocusMemorizeProgress(progress);
 
       if (progress.isLeech && prevWrongCount < FOCUS_WRONG_THRESHOLD) {
-        toastMsg = `"${word.word}" 집중 암기 지정 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
+        toastMsg = `"${word.word}" 집중 암기 지정 · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤`;
       } else if (progress.isLeech) {
-        toastMsg = `"${word.word}" 집중 암기 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
+        toastMsg = `"${word.word}" 집중 암기 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤`;
       } else {
-        toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
+        toastMsg = `"${word.word}" 모름 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤`;
       }
       toastVariant = "error";
     } else if (rating === 2) {
@@ -2420,12 +2457,12 @@
       if (progress.isLeech && prevWrongCount < FOCUS_WRONG_THRESHOLD) {
         toastMsg =
           prevLevel > progress.level
-            ? `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · 집중 암기 지정 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`
-            : `"${word.word}" 애매함 · 집중 암기 지정 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
+            ? `"${word.word}" 집중 암기 지정 (Lv.${prevLevel}→${progress.level})`
+            : `"${word.word}" 집중 암기 지정 · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤`;
       } else if (prevLevel > progress.level) {
-        toastMsg = `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
+        toastMsg = `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤`;
       } else {
-        toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
+        toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤`;
       }
     } else if (rating === 3) {
       // 3: 알겠음 -> 단계별 승급 + 단기 검증(Lv.0->1) / 미래 예약(Lv.1->2) / 졸업(Lv.2->3) (집중 암기도 동일 알고리즘)
@@ -2653,7 +2690,6 @@
   function switchDeck(nextDeckKey) {
     if (nextDeckKey !== "all" && !DECK_MAP.has(nextDeckKey)) return;
     if (session.activeDeck === nextDeckKey) {
-      closeMobileMenu();
       return;
     }
 
@@ -2671,7 +2707,6 @@
     }
 
     renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
-    closeMobileMenu();
     showToast(
       nextDeckKey === "all"
         ? "전체 단어장으로 전환했습니다."
@@ -2728,7 +2763,6 @@
     }
 
     renderAll({ animateEnter: session.activeTab !== "wrong-archive" });
-    closeMobileMenu();
   }
 
   /* ========================================================================
@@ -3093,29 +3127,50 @@
     const isSignedIn = Boolean(cloud.user);
     const displayName = isSignedIn ? extractDisplayUsername(cloud.user) : "";
 
-    // Status badge in menu sheet
-    if (dom.cloudSyncBadge && dom.cloudSyncBadgeText) {
-      dom.cloudSyncBadge.classList.remove(
+    // Status badges (cloud sub-page + mobile main menu entry button)
+    let badgeClass = "";
+    let badgeText = "로컬 저장";
+    if (isSignedIn) {
+      if (cloud.status === "syncing") {
+        badgeClass = "is-syncing";
+        badgeText = "동기화 중…";
+      } else if (cloud.status === "offline") {
+        badgeClass = "is-offline";
+        badgeText = "오프라인 대기";
+      } else if (cloud.status === "error") {
+        badgeClass = "is-error";
+        badgeText = "동기화 오류";
+      } else {
+        badgeClass = "is-synced";
+        badgeText = "동기화됨";
+      }
+    }
+
+    const syncBadges = [
+      [dom.cloudSyncBadge, dom.cloudSyncBadgeText],
+      [dom.mobileCloudEntryBadge, dom.mobileCloudEntryBadgeText],
+    ];
+    for (const [badgeEl, textEl] of syncBadges) {
+      if (!badgeEl || !textEl) continue;
+      badgeEl.classList.remove(
         "is-synced",
         "is-syncing",
         "is-offline",
         "is-error",
       );
-      if (!isSignedIn) {
-        dom.cloudSyncBadgeText.textContent = "로컬 저장";
-      } else if (cloud.status === "syncing") {
-        dom.cloudSyncBadge.classList.add("is-syncing");
-        dom.cloudSyncBadgeText.textContent = "동기화 중…";
-      } else if (cloud.status === "offline") {
-        dom.cloudSyncBadge.classList.add("is-offline");
-        dom.cloudSyncBadgeText.textContent = "오프라인 대기";
-      } else if (cloud.status === "error") {
-        dom.cloudSyncBadge.classList.add("is-error");
-        dom.cloudSyncBadgeText.textContent = "동기화 오류";
-      } else {
-        dom.cloudSyncBadge.classList.add("is-synced");
-        dom.cloudSyncBadgeText.textContent = "동기화됨";
+      if (badgeClass) {
+        badgeEl.classList.add(badgeClass);
       }
+      textEl.textContent = badgeText;
+    }
+
+    if (dom.mobileCloudEntryBtn) {
+      dom.mobileCloudEntryBtn.classList.toggle("is-signed-in", isSignedIn);
+    }
+    if (dom.mobileCloudEntrySub) {
+      dom.mobileCloudEntrySub.textContent = isSignedIn
+        ? `${displayName} 계정 연결됨`
+        : "로그인 · 기기 간 동기화";
     }
 
     // Desktop header trigger button
@@ -3904,7 +3959,11 @@
     if (session.isMenuOpen) {
       if (e.key === "Escape") {
         e.preventDefault();
-        closeMobileMenu();
+        if (session.isMobileLayout && session.menuView === "cloud") {
+          setMobileMenuView("main");
+        } else {
+          closeMobileMenu();
+        }
       }
       return;
     }
@@ -4055,6 +4114,16 @@
     }
     if (dom.mobileMenuCloseBtn) {
       dom.mobileMenuCloseBtn.addEventListener("click", closeMobileMenu);
+    }
+    if (dom.mobileMenuBackBtn) {
+      dom.mobileMenuBackBtn.addEventListener("click", () => {
+        setMobileMenuView("main");
+      });
+    }
+    if (dom.mobileCloudEntryBtn) {
+      dom.mobileCloudEntryBtn.addEventListener("click", () => {
+        setMobileMenuView("cloud");
+      });
     }
 
     const handleMediaChange = (event) => {
