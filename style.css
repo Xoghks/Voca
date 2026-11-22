@@ -1136,6 +1136,109 @@ kbd {
   gap: 16px;
 }
 
+/* Wrong Study Sub-Menu (All Wrong vs Focus Memorize 3+) */
+.wrong-study-subnav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border-radius: 13px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  box-shadow: var(--shadow-xs);
+}
+
+.wrong-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform 120ms var(--ease-apple);
+  white-space: nowrap;
+}
+
+.wrong-scope-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.wrong-scope-btn:active {
+  transform: scale(0.985);
+}
+
+.wrong-scope-btn.is-active {
+  background: var(--accent-blue-soft);
+  border-color: rgba(0, 122, 255, 0.22);
+  color: var(--accent-blue);
+}
+
+.wrong-scope-btn.is-focus-scope.is-active {
+  background: var(--accent-orange-soft);
+  border-color: rgba(255, 149, 0, 0.34);
+  color: var(--accent-orange);
+}
+
+.wrong-scope-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-red);
+  flex-shrink: 0;
+}
+
+.wrong-scope-hint {
+  font-size: 0.71rem;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+.wrong-scope-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+.wrong-scope-btn.is-active .wrong-scope-count {
+  background: rgba(0, 122, 255, 0.16);
+  color: var(--accent-blue);
+}
+
+.wrong-scope-btn.is-focus-scope.is-active .wrong-scope-count {
+  background: rgba(255, 149, 0, 0.18);
+  color: var(--accent-orange);
+}
+
+[data-theme="dark"] .wrong-scope-btn.is-active {
+  border-color: rgba(10, 132, 255, 0.32);
+}
+
+[data-theme="dark"] .wrong-scope-btn.is-focus-scope.is-active {
+  border-color: rgba(255, 159, 10, 0.38);
+}
+
 .deck-meta {
   display: flex;
   align-items: center;
@@ -2898,6 +3001,32 @@ kbd {
     overflow: visible;
   }
 
+  .wrong-study-subnav {
+    flex-shrink: 0;
+    padding: 4px;
+    gap: 5px;
+    border-radius: 11px;
+  }
+
+  .wrong-scope-btn {
+    height: 30px;
+    padding: 0 8px;
+    gap: 4px;
+    border-radius: 8px;
+    font-size: 0.76rem;
+  }
+
+  .wrong-scope-hint {
+    font-size: 0.66rem;
+  }
+
+  .wrong-scope-count {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    font-size: 0.65rem;
+  }
+
   .flashcard-stage {
     flex: 1;
     min-height: 0;
@@ -3134,6 +3263,11 @@ kbd {
 
   .segmented-btn {
     height: 28px;
+  }
+
+  .wrong-scope-btn {
+    height: 26px;
+    font-size: 0.72rem;
   }
 
   .flashcard-face {

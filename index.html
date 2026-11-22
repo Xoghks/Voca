@@ -23,7 +23,7 @@
     <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png" />
-    <link rel="stylesheet" href="style.css?v=16" />
+    <link rel="stylesheet" href="style.css?v=18" />
     <link rel="manifest" href="./manifest.json" />
   </head>
   <body>
@@ -681,6 +681,37 @@
         role="tabpanel"
         aria-labelledby="tabAll"
       >
+        <!-- 오답 집중 공략 하위 필터 메뉴 (전체 오답 / 집중 암기 3회+) -->
+        <div
+          id="wrongStudySubnav"
+          class="wrong-study-subnav"
+          role="group"
+          aria-label="오답 집중 공략 필터"
+          hidden
+        >
+          <button
+            type="button"
+            class="wrong-scope-btn is-active"
+            data-wrong-scope="all"
+            aria-pressed="true"
+          >
+            <span class="wrong-scope-label">전체 오답</span>
+            <span id="wrongScopeAllCount" class="wrong-scope-count">0</span>
+          </button>
+          <button
+            type="button"
+            class="wrong-scope-btn is-focus-scope"
+            data-wrong-scope="focus"
+            aria-pressed="false"
+            title="3회 이상 틀린 미마스터 단어만 모아보기"
+          >
+            <span class="wrong-scope-dot" aria-hidden="true"></span>
+            <span class="wrong-scope-label">집중 암기</span>
+            <span class="wrong-scope-hint">3회+</span>
+            <span id="wrongScopeFocusCount" class="wrong-scope-count">0</span>
+          </button>
+        </div>
+
         <div class="deck-meta">
           <div class="deck-meta-left">
             <span id="deckModeBadge" class="meta-pill">스마트 믹스</span>
@@ -760,7 +791,7 @@
                         id="cardLeechBadge"
                         class="leech-badge"
                         hidden
-                        title="연속 3회 이상 오답 · 집중 암기 필요 (Leech)"
+                        title="오답 3회 이상 · 집중 암기"
                         >집중 암기</span
                       >
                     </div>
@@ -865,7 +896,7 @@
                       id="cardBackLeechBadge"
                       class="leech-badge"
                       hidden
-                      title="연속 3회 이상 오답 · 집중 암기 필요 (Leech)"
+                      title="오답 3회 이상 · 집중 암기"
                       >집중 암기</span
                     >
                   </div>
@@ -988,7 +1019,7 @@
             >
               <span class="rating-key">1</span>
               <span class="rating-label">모름</span>
-              <span class="rating-sub">5장 뒤 재출제</span>
+              <span class="rating-sub">5~12장 뒤 재출제</span>
             </button>
             <button
               type="button"
@@ -997,7 +1028,7 @@
             >
               <span class="rating-key">2</span>
               <span class="rating-label">애매함</span>
-              <span class="rating-sub">Lv -1 · 15~20장 뒤</span>
+              <span class="rating-sub">Lv -1 · 20~30장 뒤</span>
             </button>
             <button
               type="button"
@@ -1113,15 +1144,15 @@
       아래에 <script src="./data/새파일.js" defer></script> 한 줄만 추가하세요.
       ========================================================================
     -->
-    <script src="./data/toeic.js?v=16" defer></script>
-    <script src="./data/toefl.js?v=16" defer></script>
-    <script src="./data/verbs.js?v=16" defer></script>
-    <script src="./data/suneung.js?v=16" defer></script>
+    <script src="./data/toeic.js?v=18" defer></script>
+    <script src="./data/toefl.js?v=18" defer></script>
+    <script src="./data/verbs.js?v=18" defer></script>
+    <script src="./data/suneung.js?v=18" defer></script>
 
     <!-- Supabase JS v2 SDK (클라우드 실시간 동기화 — 오프라인 시에도 안전하게 무시됨) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 
     <!-- 메인 앱 컨트롤러 (window.VOCAB_DECKS 를 자동 인식) -->
-    <script src="app.js?v=16" defer></script>
+    <script src="app.js?v=18" defer></script>
   </body>
 </html>

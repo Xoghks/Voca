@@ -23,13 +23,15 @@
     "bookmarked",
   ]);
   const TAB_ORDER = ["all", "wrong-study", "wrong-archive"];
+  const VALID_WRONG_SCOPES = new Set(["all", "focus"]);
   const FLY_OUT_DURATION_MS = 280;
   const ENTER_ANIMATION_MS = 380;
   const STREAM_BATCH_SIZE = 20;
   const STREAM_REFILL_THRESHOLD = 5;
-  const WRONG_REINSERT_OFFSET = 5;
-  const HARD_REINSERT_MIN = 15;
-  const HARD_REINSERT_MAX = 20;
+  const WRONG_REINSERT_MIN = 5;
+  const WRONG_REINSERT_MAX = 12;
+  const HARD_REINSERT_MIN = 20;
+  const HARD_REINSERT_MAX = 30;
   const LV1_DELAY_MIN = 40;
   const LV1_DELAY_MAX = 80;
   const LV1_SHRINK_THRESHOLD = 80;
@@ -37,9 +39,7 @@
   const LV2_DELAY_MAX = 220;
   const LV2_SHRINK_THRESHOLD = 220;
   const LV2_MAX_PER_BATCH = 5;
-  const LEECH_STREAK_THRESHOLD = 3;
-  const LEECH_WINDOW_MS = 24 * 60 * 60 * 1000;
-  const LEECH_MIN_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+  const FOCUS_WRONG_THRESHOLD = 3;
   const MAX_LEVEL = 3;
   const MOBILE_LAYOUT_QUERY =
     "(max-width: 720px), (max-height: 540px) and (max-width: 960px)";
@@ -211,6 +211,12 @@
 
     // Study View
     studyView: document.getElementById("studyView"),
+    wrongStudySubnav: document.getElementById("wrongStudySubnav"),
+    wrongScopeButtons: Array.from(
+      document.querySelectorAll(".wrong-scope-btn"),
+    ),
+    wrongScopeAllCount: document.getElementById("wrongScopeAllCount"),
+    wrongScopeFocusCount: document.getElementById("wrongScopeFocusCount"),
     deckMeta: document.querySelector(".deck-meta"),
     deckMetaRight: document.getElementById("deckMetaRight"),
     deckModeBadge: document.getElementById("deckModeBadge"),
@@ -522,21 +528,9 @@
       dueStep = Math.floor(Number(raw.dueStep));
     }
 
-    const sessionWrongStreak = Number.isFinite(Number(raw.sessionWrongStreak))
-      ? Math.max(0, Math.floor(Number(raw.sessionWrongStreak)))
-      : 0;
-    const isLeech = level >= MAX_LEVEL ? false : Boolean(raw.isLeech);
-
-    let leechUntil = null;
-    if (
-      isLeech &&
-      raw.leechUntil !== undefined &&
-      raw.leechUntil !== null &&
-      Number.isFinite(Number(raw.leechUntil)) &&
-      Number(raw.leechUntil) > 0
-    ) {
-      leechUntil = Math.floor(Number(raw.leechUntil));
-    }
+    const sessionWrongStreak = 0;
+    const isLeech = level < MAX_LEVEL && wrongCount >= FOCUS_WRONG_THRESHOLD;
+    const leechUntil = null;
 
     let status = VALID_STATUSES.has(raw.status) ? raw.status : "new";
     if (level >= MAX_LEVEL) {
@@ -580,11 +574,11 @@
   const session = {
     activeDeck: "all", // 'all' | deck.key ('toeic', 'toefl', ...)
     activeTab: "all", // 'all' | 'wrong-study' | 'wrong-archive'
+    wrongStudyScope: "all", // 'all' | 'focus' (오답 3회 이상 집중 암기)
     streamFilter: "smart-mix", // 'smart-mix' | 'new-only' | 'review-only' | 'bookmarked'
     queue: [],
     currentIndex: 0,
     passedInStream: new Set(),
-    leechDeferredIds: new Set(),
     isFlipped: false,
     isAnimating: false,
     isMobileLayout: false,
@@ -963,6 +957,15 @@
     return progress.wrongCount >= 1 && progress.level < MAX_LEVEL;
   }
 
+  // 집중 암기 대상: wrongCount >= 3 이면서 아직 level < 3 인 단어 (표시·필터 전용, 알고리즘 동일)
+  function isFocusMemorizeProgress(progress) {
+    return Boolean(
+      progress &&
+        progress.wrongCount >= FOCUS_WRONG_THRESHOLD &&
+        progress.level < MAX_LEVEL,
+    );
+  }
+
   // 오답노트 보관함 & 누적 오답: wrongCount >= 1 인 단어
   function isWrongArchiveTarget(wordId) {
     return getWordProgress(wordId).wrongCount >= 1;
@@ -984,6 +987,12 @@
     const p = getWordProgress(word.id);
     if (tab === "wrong-study") {
       if (!isWrongFocusTarget(word.id)) return false;
+      if (
+        session.wrongStudyScope === "focus" &&
+        !isFocusMemorizeProgress(p)
+      ) {
+        return false;
+      }
       if (session.streamFilter === "bookmarked") return p.bookmarked;
       return true;
     }
@@ -1025,26 +1034,6 @@
     const nextStep = getDeckStep(deckKey) + 1;
     persistedState.deckSteps[deckKey] = nextStep;
     return nextStep;
-  }
-
-  function getEndOfTodayTimestamp(nowMs = Date.now()) {
-    const d = new Date(nowMs);
-    const endOfDay = new Date(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate() + 1,
-      0,
-      0,
-      0,
-      0,
-    ).getTime();
-    return Math.max(endOfDay, nowMs + LEECH_MIN_COOLDOWN_MS);
-  }
-
-  function isLeechInCooldown(wordId, progress = getWordProgress(wordId)) {
-    if (!progress || !progress.isLeech) return false;
-    if (session.leechDeferredIds.has(wordId)) return true;
-    return Boolean(progress.leechUntil && Date.now() < progress.leechUntil);
   }
 
   function isScheduledReviewDue(word, progress = getWordProgress(word.id)) {
@@ -1114,12 +1103,8 @@
         const bLast = b.id === preferExcludeId ? 1 : 0;
         if (aLast !== bLast) return aLast - bLast;
       }
-      // Cooldown Leeches always sink to lowest priority inside candidate lists
       const pa = getWordProgress(a.id);
       const pb = getWordProgress(b.id);
-      const aLeechCool = isLeechInCooldown(a.id, pa) ? 1 : 0;
-      const bLeechCool = isLeechInCooldown(b.id, pb) ? 1 : 0;
-      if (aLeechCool !== bLeechCool) return aLeechCool - bLeechCool;
 
       // Guarantee 1-to-1 sweep without repeats before all eligible cards are seen once
       const aSeen = session.passedInStream.has(a.id) ? 1 : 0;
@@ -1170,7 +1155,7 @@
       session.passedInStream.clear();
     }
 
-    // 오답 집중 공략 탭 (Leech 쿨다운 단어는 맨 뒤로 후순위 배치)
+    // 오답 집중 공략 탭
     if (tab === "wrong-study") {
       return sortReviewCandidates([...available], preferExcludeId)
         .slice(0, batchSize)
@@ -1192,17 +1177,14 @@
         .map((w) => w.id);
     }
 
-    // 복습(레벨 1~2) 집중: 도래한 Lv.1~2 우선 → 미래 예약 Lv.1~2(빠른 예약순) → Leech 쿨다운 순
+    // 복습(레벨 1~2) 집중: 도래한 Lv.1~2 우선 → 미래 예약 Lv.1~2(빠른 예약순)
     if (session.streamFilter === "review-only") {
       const dueNow = [];
       const pendingScheduled = [];
-      const leechDeferred = [];
 
       for (const word of available) {
         const p = getWordProgress(word.id);
-        if (isLeechInCooldown(word.id, p)) {
-          leechDeferred.push(word);
-        } else if (
+        if (
           (p.level === 1 || p.level === 2) &&
           !isScheduledReviewDue(word, p)
         ) {
@@ -1215,7 +1197,6 @@
       const ordered = [
         ...sortReviewCandidates(dueNow, preferExcludeId),
         ...sortByDueStep(pendingScheduled),
-        ...sortReviewCandidates(leechDeferred, preferExcludeId),
       ];
       return ordered.slice(0, batchSize).map((w) => w.id);
     }
@@ -1223,19 +1204,16 @@
     // 스마트 믹스 v3 (점진적 확장 간격):
     // - Lv.1 (40~80장 뒤 예약), Lv.2 (100~220장 뒤 예약) 모두 dueStep 도달 전까지 숨김
     // - 도래한 Lv.2(배치당 최대 5장 우선) + 오답/도래한 Lv.1 복습 2 : 신규 1 비율 혼합
-    // - 일반 풀 소진 시 후반부 Fallback Tier 1(가장 빨리 도래할 예약 Lv.1/Lv.2) -> Tier 2(Leech 쿨다운)
+    // - 일반 풀 소진 시 후반부 Fallback(가장 빨리 도래할 예약 Lv.1/Lv.2)
     const dueLv2 = [];
     const dueLv1 = [];
     const immediateWrong = [];
     const pendingScheduled = [];
     const newTier = [];
-    const leechCooldown = [];
 
     for (const word of available) {
       const p = getWordProgress(word.id);
-      if (isLeechInCooldown(word.id, p)) {
-        leechCooldown.push(word);
-      } else if (p.level === 2) {
+      if (p.level === 2) {
         if (isScheduledReviewDue(word, p)) {
           dueLv2.push(word);
         } else {
@@ -1259,7 +1237,6 @@
     sortByDueStep(pendingScheduled);
     sortReviewCandidates(immediateWrong, preferExcludeId);
     newTier.sort(compareWordsByActiveOrder);
-    sortReviewCandidates(leechCooldown, preferExcludeId);
 
     // Combine regular due reviews (Lv.0 wrong + due Lv.1) and weave capped dueLv2 gently
     const regularReview = [...immediateWrong, ...dueLv1];
@@ -1306,17 +1283,9 @@
       }
     }
 
-    // End-of-Deck Fallback Tier 1: Pull earliest-due pending Lv.1/Lv.2 cards so deck never stalls
+    // End-of-Deck Fallback: Pull earliest-due pending Lv.1/Lv.2 cards so deck never stalls
     if (mixed.length < batchSize && pendingScheduled.length > 0) {
       for (const word of pendingScheduled) {
-        if (mixed.length >= batchSize) break;
-        mixed.push(word.id);
-      }
-    }
-
-    // End-of-Deck Fallback Tier 2: Pull deferred Leech cards only if nothing else remains
-    if (mixed.length < batchSize && leechCooldown.length > 0) {
-      for (const word of leechCooldown) {
         if (mixed.length >= batchSize) break;
         mixed.push(word.id);
       }
@@ -1325,9 +1294,17 @@
     return mixed;
   }
 
-  function refillStreamIfNeeded(justRatedId = null, forceExcludeRated = false) {
+  function refillStreamIfNeeded(
+    justRatedId = null,
+    forceExcludeRated = false,
+    minQueueLength = STREAM_REFILL_THRESHOLD + 1,
+  ) {
     if (session.activeTab === "wrong-archive") return;
-    if (session.queue.length > STREAM_REFILL_THRESHOLD) return;
+    const requiredLength = Math.max(
+      STREAM_REFILL_THRESHOLD + 1,
+      Math.floor(Number(minQueueLength) || 0),
+    );
+    if (session.queue.length >= requiredLength) return;
 
     const excludeIds = new Set(session.queue);
     // 큐에 다른 카드가 남아 있거나, 방금 틀린 카드를 별도로 재삽입할 예정이면 중복 방지
@@ -1335,10 +1312,15 @@
       excludeIds.add(justRatedId);
     }
 
+    const batchSize = Math.max(
+      STREAM_BATCH_SIZE,
+      requiredLength - session.queue.length,
+    );
+
     let nextBatch = buildNextStreamBatch({
       excludeIds,
       preferExcludeId: justRatedId,
-      batchSize: STREAM_BATCH_SIZE,
+      batchSize,
     });
 
     // 큐가 완전히 비었고 방금 통과한 단어가 유일한 미마스터 후보라면 자연스럽게 이어 붙임
@@ -1808,7 +1790,11 @@
     const isDeckFiltered = session.activeDeck !== "all";
     const isModeFiltered = session.streamFilter !== "smart-mix";
     const isRandomOrder = Boolean(persistedState.randomOrder);
-    const isFiltered = isDeckFiltered || isModeFiltered || isRandomOrder;
+    const isFocusScope =
+      session.activeTab === "wrong-study" &&
+      session.wrongStudyScope === "focus";
+    const isMenuFiltered = isDeckFiltered || isModeFiltered || isRandomOrder;
+    const isFiltered = isMenuFiltered || isFocusScope;
 
     dom.mobileStatusPill.classList.toggle("has-filter", isFiltered);
     dom.mobileStatusPill.classList.toggle(
@@ -1820,6 +1806,9 @@
       const parts = [];
       if (isDeckFiltered) {
         parts.push(getActiveDeckTitle());
+      }
+      if (isFocusScope) {
+        parts.push("집중 암기");
       }
       if (session.streamFilter === "new-only") {
         parts.push("신규");
@@ -1842,7 +1831,7 @@
     }
 
     if (dom.mobileMenuDot) {
-      dom.mobileMenuDot.hidden = !isFiltered;
+      dom.mobileMenuDot.hidden = !isMenuFiltered;
     }
 
     if (session.activeTab === "wrong-archive") {
@@ -1904,7 +1893,44 @@
     updateBadge(dom.tabArchiveCount, wrongArchiveCount);
 
     renderStreamFilterOptions();
+    renderWrongStudySubnav();
     renderMobileHeaderStatus();
+  }
+
+  function renderWrongStudySubnav() {
+    if (!dom.wrongStudySubnav) return;
+
+    const isWrongStudy = session.activeTab === "wrong-study";
+    dom.wrongStudySubnav.hidden = !isWrongStudy;
+
+    const deckWords = getActiveDeckWords();
+    const bookmarkedOnly = session.streamFilter === "bookmarked";
+    let allWrongCount = 0;
+    let focusWrongCount = 0;
+
+    for (const word of deckWords) {
+      const p = getWordProgress(word.id);
+      if (bookmarkedOnly && !p.bookmarked) continue;
+      if (p.wrongCount >= 1 && p.level < MAX_LEVEL) {
+        allWrongCount += 1;
+        if (isFocusMemorizeProgress(p)) {
+          focusWrongCount += 1;
+        }
+      }
+    }
+
+    if (dom.wrongScopeAllCount) {
+      dom.wrongScopeAllCount.textContent = String(allWrongCount);
+    }
+    if (dom.wrongScopeFocusCount) {
+      dom.wrongScopeFocusCount.textContent = String(focusWrongCount);
+    }
+
+    dom.wrongScopeButtons.forEach((btn) => {
+      const isActive = btn.dataset.wrongScope === session.wrongStudyScope;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-pressed", String(isActive));
+    });
   }
 
   function updateSegmentedIndicator() {
@@ -1922,6 +1948,9 @@
     const isArchive = session.activeTab === "wrong-archive";
     dom.studyView.hidden = isArchive;
     dom.archiveView.hidden = !isArchive;
+    if (dom.wrongStudySubnav) {
+      dom.wrongStudySubnav.hidden = session.activeTab !== "wrong-study";
+    }
 
     if (dom.shuffleBtn) {
       dom.shuffleBtn.hidden = session.isMobileLayout && isArchive;
@@ -1977,8 +2006,11 @@
     const { animateEnter = false } = options;
 
     const isWrongMode = session.activeTab === "wrong-study";
+    const isFocusMode = isWrongMode && session.wrongStudyScope === "focus";
     const modeLabel = isWrongMode
-      ? "오답 집중 공략"
+      ? isFocusMode
+        ? "오답 집중 공략 · 집중 암기"
+        : "오답 집중 공략"
       : getStreamFilterLabel(session.streamFilter);
     const badgeParts = [];
     if (session.activeDeck !== "all") {
@@ -2028,6 +2060,26 @@
         } else {
           dom.returnToAllBtn.hidden = true;
         }
+      } else if (isFocusMode) {
+        const hasAnyWrongInDeck = getActiveDeckWords().some((w) => {
+          const wp = getWordProgress(w.id);
+          if (session.streamFilter === "bookmarked" && !wp.bookmarked) {
+            return false;
+          }
+          return isWrongFocusTarget(w.id);
+        });
+        dom.studyEmptyState.classList.add("is-complete");
+        dom.studyEmptyTitle.textContent = "집중 암기 단어가 없습니다";
+        dom.studyEmptyDesc.textContent =
+          "3회 이상 틀린 미마스터(Lv.3 미만) 단어가 이곳에 자동으로 모입니다.";
+        if (dom.restartSessionBtn) {
+          dom.restartSessionBtn.hidden = true;
+        }
+        dom.returnToAllBtn.hidden = false;
+        dom.returnToAllBtn.className = "primary-pill-btn";
+        dom.returnToAllBtn.textContent = hasAnyWrongInDeck
+          ? "전체 오답 보기"
+          : "스마트 믹스로 이동";
       } else if (isWrongMode) {
         dom.studyEmptyState.classList.add("is-complete");
         dom.studyEmptyTitle.textContent = "공략할 오답 단어가 없습니다";
@@ -2094,6 +2146,7 @@
     }
 
     const progress = getWordProgress(word.id);
+    const isFocusWord = isFocusMemorizeProgress(progress);
 
     dom.cardProgressText.textContent =
       totalEligible > 0
@@ -2106,7 +2159,7 @@
     }
     dom.cardPos.textContent = word.pos;
     if (dom.cardLeechBadge) {
-      dom.cardLeechBadge.hidden = !progress.isLeech;
+      dom.cardLeechBadge.hidden = !isFocusWord;
     }
     dom.cardWord.textContent = word.word;
     dom.cardPhonetic.textContent = word.phonetic;
@@ -2130,7 +2183,7 @@
     dom.cardBackWord.textContent = word.word;
     dom.cardBackPos.textContent = word.pos;
     if (dom.cardBackLeechBadge) {
-      dom.cardBackLeechBadge.hidden = !progress.isLeech;
+      dom.cardBackLeechBadge.hidden = !isFocusWord;
     }
     dom.cardWrongBadge.textContent = `오답 ${progress.wrongCount}회`;
     dom.cardWrongBadge.classList.toggle("has-wrong", progress.wrongCount > 0);
@@ -2248,11 +2301,11 @@
       wrongPill.textContent = `오답 ${progress.wrongCount}회`;
 
       badgesDiv.append(levelBadge, wrongPill);
-      if (progress.isLeech) {
+      if (isFocusMemorizeProgress(progress)) {
         const leechPill = document.createElement("span");
         leechPill.className = "leech-badge";
         leechPill.textContent = "집중 암기";
-        leechPill.title = "연속 3회 이상 오답 · 집중 암기 필요 (Leech)";
+        leechPill.title = "오답 3회 이상 · 집중 암기";
         badgesDiv.appendChild(leechPill);
       }
 
@@ -2327,62 +2380,62 @@
     const progress = getWordProgress(word.id);
     const now = Date.now();
     const prevLevel = progress.level;
-    const prevLastStudied = progress.lastStudied;
+    const prevWrongCount = progress.wrongCount;
 
     const currentDeckStep = incrementDeckStep(word.deckKey);
     progress.lastStudied = now;
 
     let toastMsg = "";
     let toastVariant = "default";
-    let triggeredLeechCooldown = false;
 
     if (rating === 1) {
-      // 1: 모름 -> Lv.0 초기화, 연속 오답 추적 (3연속 시 Leech 보류로 무한 루프 차단)
+      // 1: 모름 -> Lv.0 초기화, 5~12장 뒤 재출제 (누적 오답 3회 이상은 집중 암기 배지만 표시, 알고리즘 동일)
       session.passedInStream.delete(word.id);
       progress.level = 0;
       progress.dueStep = null;
       progress.wrongCount += 1;
       progress.status = "wrong";
+      progress.sessionWrongStreak = 0;
+      progress.leechUntil = null;
+      progress.isLeech = isFocusMemorizeProgress(progress);
 
-      if (prevLastStudied && now - prevLastStudied > LEECH_WINDOW_MS) {
-        progress.sessionWrongStreak = 0;
-      }
-      progress.sessionWrongStreak = (progress.sessionWrongStreak || 0) + 1;
-
-      if (progress.sessionWrongStreak >= LEECH_STREAK_THRESHOLD) {
-        progress.isLeech = true;
-        progress.leechUntil = getEndOfTodayTimestamp(now);
-        session.leechDeferredIds.add(word.id);
-        triggeredLeechCooldown = true;
-        toastMsg = `"${word.word}" 집중 암기(Leech) 지정 · 잠시 보류 후 다음 세션 출제`;
-        toastVariant = "error";
+      if (progress.isLeech && prevWrongCount < FOCUS_WRONG_THRESHOLD) {
+        toastMsg = `"${word.word}" 집중 암기 지정 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
+      } else if (progress.isLeech) {
+        toastMsg = `"${word.word}" 집중 암기 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
       } else {
-        toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · 5장 뒤 재출제`;
-        toastVariant = "error";
+        toastMsg = `"${word.word}" 레벨 초기화 (${progress.wrongCount}회) · ${WRONG_REINSERT_MIN}~${WRONG_REINSERT_MAX}장 뒤 재출제`;
       }
+      toastVariant = "error";
     } else if (rating === 2) {
-      // 2: 애매함 -> 단계적 강등 (Lv.2->1, Lv.1->0, Lv.0->0), 15~20장 뒤 재출제
+      // 2: 애매함 -> 단계적 강등 (Lv.2->1, Lv.1->0, Lv.0->0), 20~30장 뒤 재출제
       session.passedInStream.delete(word.id);
       progress.level = Math.max(0, prevLevel - 1);
       progress.dueStep = null;
       progress.wrongCount += 1;
       progress.status = "hard";
+      progress.leechUntil = null;
+      progress.isLeech = isFocusMemorizeProgress(progress);
 
-      if (prevLevel > progress.level) {
-        toastMsg = `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · 15~20장 뒤 재출제`;
+      if (progress.isLeech && prevWrongCount < FOCUS_WRONG_THRESHOLD) {
+        toastMsg =
+          prevLevel > progress.level
+            ? `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · 집중 암기 지정 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`
+            : `"${word.word}" 애매함 · 집중 암기 지정 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
+      } else if (prevLevel > progress.level) {
+        toastMsg = `"${word.word}" 애매함 (Lv.${prevLevel}→${progress.level}) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
       } else {
-        toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · 15~20장 뒤 재출제`;
+        toastMsg = `"${word.word}" 애매함 (${progress.wrongCount}회) · ${HARD_REINSERT_MIN}~${HARD_REINSERT_MAX}장 뒤 재출제`;
       }
     } else if (rating === 3) {
-      // 3: 알겠음 -> Leech 해제, 단계별 승급 + 단기 검증(Lv.0->1) / 미래 예약(Lv.1->2) / 졸업(Lv.2->3)
-      const wasLeech = Boolean(progress.isLeech);
+      // 3: 알겠음 -> 단계별 승급 + 단기 검증(Lv.0->1) / 미래 예약(Lv.1->2) / 졸업(Lv.2->3) (집중 암기도 동일 알고리즘)
+      const wasFocus = isFocusMemorizeProgress(progress);
       progress.sessionWrongStreak = 0;
-      progress.isLeech = false;
       progress.leechUntil = null;
-      session.leechDeferredIds.delete(word.id);
 
       progress.level = Math.min(MAX_LEVEL, prevLevel + 1);
       progress.status = progress.level >= MAX_LEVEL ? "master" : "good";
+      progress.isLeech = isFocusMemorizeProgress(progress);
 
       ensureTodayStats();
       persistedState.todayStats.count += 1;
@@ -2395,7 +2448,7 @@
         // Lv.2 -> Lv.3 마스터 졸업
         progress.dueStep = null;
         session.passedInStream.add(word.id);
-        toastMsg = wasLeech
+        toastMsg = wasFocus
           ? `"${word.word}" 집중 암기 해제 · 마스터 달성! (Lv.3)`
           : `"${word.word}" 마스터 달성! (Lv.3)`;
         toastVariant = "success";
@@ -2412,9 +2465,7 @@
         const futureDelay = computeLv1FutureDelay(remainingUnmastered);
         progress.dueStep = currentDeckStep + futureDelay;
         session.passedInStream.add(word.id);
-        toastMsg = wasLeech
-          ? `"${word.word}" 집중 암기 해제 · Lv.1 (약 ${futureDelay}장 뒤 복습)`
-          : `"${word.word}" Lv.1 승급 · 약 ${futureDelay}장 뒤 1차 복습`;
+        toastMsg = `"${word.word}" Lv.1 승급 · 약 ${futureDelay}장 뒤 1차 복습`;
       } else {
         progress.dueStep = null;
         session.passedInStream.add(word.id);
@@ -2450,37 +2501,28 @@
 
       if (ratedId !== undefined) {
         if (rating === 1) {
-          if (triggeredLeechCooldown) {
-            // Leech 쿨다운 진입: 5장 뒤 끼어들기 중단, 다음 배치 필요 시 자동 보충
-            refillStreamIfNeeded(ratedId, false);
-            session.currentIndex =
-              session.queue.length === 0
-                ? 0
-                : idx >= session.queue.length
-                  ? 0
-                  : idx;
-          } else {
-            // 일반 모름(1~2회): 다음 배치 필요 시 보충 후 5장 뒤에 즉시 재삽입
-            refillStreamIfNeeded(ratedId, true);
-            const insertIdx = Math.min(
-              idx + WRONG_REINSERT_OFFSET,
-              session.queue.length,
+          // 모름: 횟수 제한 없이 5~12장 뒤로 계속 재삽입
+          const wrongOffset =
+            WRONG_REINSERT_MIN +
+            Math.floor(
+              Math.random() * (WRONG_REINSERT_MAX - WRONG_REINSERT_MIN + 1),
             );
-            session.queue.splice(insertIdx, 0, ratedId);
-            if (session.queue.length > 1 && session.queue[idx] === ratedId) {
-              session.currentIndex = 0;
-            } else {
-              session.currentIndex = idx >= session.queue.length ? 0 : idx;
-            }
+          refillStreamIfNeeded(ratedId, true, idx + wrongOffset);
+          const insertIdx = Math.min(idx + wrongOffset, session.queue.length);
+          session.queue.splice(insertIdx, 0, ratedId);
+          if (session.queue.length > 1 && session.queue[idx] === ratedId) {
+            session.currentIndex = 0;
+          } else {
+            session.currentIndex = idx >= session.queue.length ? 0 : idx;
           }
         } else if (rating === 2) {
-          // 애매함: 단계적 강등 후 15~20장 뒤에 재삽입
-          refillStreamIfNeeded(ratedId, true);
+          // 애매함: 단계적 강등 후 20~30장 뒤로 재삽입
           const hardOffset =
             HARD_REINSERT_MIN +
             Math.floor(
               Math.random() * (HARD_REINSERT_MAX - HARD_REINSERT_MIN + 1),
             );
+          refillStreamIfNeeded(ratedId, true, idx + hardOffset);
           const insertIdx = Math.min(idx + hardOffset, session.queue.length);
           session.queue.splice(insertIdx, 0, ratedId);
           if (session.queue.length > 1 && session.queue[idx] === ratedId) {
@@ -2558,7 +2600,6 @@
     progress.sessionWrongStreak = 0;
     progress.isLeech = false;
     progress.leechUntil = null;
-    session.leechDeferredIds.delete(wordId);
     if (progress.status === "wrong" || progress.status === "hard") {
       progress.status =
         progress.level >= MAX_LEVEL
@@ -2593,7 +2634,6 @@
       progress.sessionWrongStreak = 0;
       progress.isLeech = false;
       progress.leechUntil = null;
-      session.leechDeferredIds.delete(word.id);
       if (progress.status === "wrong" || progress.status === "hard") {
         progress.status =
           progress.level >= MAX_LEVEL
@@ -2656,6 +2696,24 @@
     }
 
     renderAll({ animateEnter: nextTab !== "wrong-archive" });
+  }
+
+  function switchWrongStudyScope(nextScope) {
+    const resolved = VALID_WRONG_SCOPES.has(nextScope) ? nextScope : "all";
+    if (session.wrongStudyScope === resolved) {
+      renderWrongStudySubnav();
+      return;
+    }
+
+    session.wrongStudyScope = resolved;
+    clearSwipeClasses();
+    resetCardFlipInstant();
+
+    if (session.activeTab === "wrong-study") {
+      buildSessionQueue();
+    }
+
+    renderAll({ animateEnter: session.activeTab === "wrong-study" });
   }
 
   function handleStreamFilterChange(nextFilter) {
@@ -2791,7 +2849,6 @@
 
         persistedState = nextState;
         session.activeDeck = persistedState.selectedDeck;
-        session.leechDeferredIds.clear();
         applyTheme(persistedState.theme);
         rebuildRandomOrderMap();
         syncRandomOrderUI();
@@ -2881,11 +2938,11 @@
 
     session.activeDeck = "all";
     session.activeTab = "all";
+    session.wrongStudyScope = "all";
     session.streamFilter = "smart-mix";
     session.queue = [];
     session.currentIndex = 0;
     session.passedInStream.clear();
-    session.leechDeferredIds.clear();
     session.isFlipped = false;
     session.isAnimating = false;
 
@@ -3174,7 +3231,6 @@
       dom.hideMeaningToggle.checked = Boolean(persistedState.hideMeanings);
     }
 
-    session.leechDeferredIds.clear();
     rebuildRandomOrderMap();
     syncRandomOrderUI();
     clearSwipeClasses();
@@ -4014,6 +4070,13 @@
     dom.tabButtons.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
+    if (dom.wrongStudySubnav) {
+      dom.wrongStudySubnav.addEventListener("click", (e) => {
+        const scopeBtn = e.target.closest("button[data-wrong-scope]");
+        if (!scopeBtn) return;
+        switchWrongStudyScope(scopeBtn.dataset.wrongScope);
+      });
+    }
     dom.streamFilter.addEventListener("change", (e) =>
       handleStreamFilterChange(e.target.value),
     );
@@ -4029,6 +4092,22 @@
       dom.restartSessionBtn.addEventListener("click", startMasteredFreeReview);
     }
     dom.returnToAllBtn.addEventListener("click", () => {
+      if (
+        session.activeTab === "wrong-study" &&
+        session.wrongStudyScope === "focus"
+      ) {
+        const hasAnyWrongInDeck = getActiveDeckWords().some((w) => {
+          const wp = getWordProgress(w.id);
+          if (session.streamFilter === "bookmarked" && !wp.bookmarked) {
+            return false;
+          }
+          return isWrongFocusTarget(w.id);
+        });
+        if (hasAnyWrongInDeck) {
+          switchWrongStudyScope("all");
+          return;
+        }
+      }
       if (
         session.activeTab === "all" &&
         session.streamFilter === "smart-mix" &&
